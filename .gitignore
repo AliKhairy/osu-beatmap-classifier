@@ -1,0 +1,22 @@
+# Python cache and environment files
+__pycache__/
+*.pyc
+venv/
+env/
+
+# Data and model files - Do not commit these to GitHub!
+ml_dataset.json
+beatmap_classifier.pkl
+corrections.json
+
+# Local folders for beatmaps
+downloads/
+songs/
+
+# Secrets file
+.env
+
+# IDE and OS-specific files
+.idea/
+.vscode/
+.DS_Store
