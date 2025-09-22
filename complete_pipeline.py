@@ -11,13 +11,15 @@ import requests
 from echosu_api import EchoOsuAPI
 from osu_parser import OsuFileParser
 from tag_scraper import tag_counts, filter_tags
+from dotenv import load_dotenv
 
 # --- Configuration ---
-# WARNING: Storing secrets directly in the code is insecure.
-# It is strongly recommended to use environment variables or a config file.
-ECHO_TOKEN = "aCuKVN7vValzoM9U8N1atRAQKo4BWslyMqPQb9YYq7wg89T8T75jK8TsssrSnbia"
-OSU_CLIENT_ID = "42572"
-OSU_CLIENT_SECRET = "oMFqlUaqlmWBNnnepl6p8nRYg5xGdrYgZvPDSpe2"
+load_dotenv()
+
+# Get tokens from the environment
+ECHO_TOKEN = os.getenv("ECHO_API_TOKEN")
+OSU_CLIENT_ID = os.getenv("OSU_CLIENT_ID")
+OSU_CLIENT_SECRET = os.getenv("OSU_CLIENT_SECRET")
 
 
 def get_oauth_token():
@@ -190,3 +192,4 @@ if __name__ == "__main__":
             print("Could not create a training sample.")
     else:
         print("Could not start pipeline due to authentication failure.")
+
