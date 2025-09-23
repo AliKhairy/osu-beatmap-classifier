@@ -31,7 +31,7 @@ The project follows a standard machine learning pipeline:
 
 **1. Clone the repository:**
 ```bash
-git clone [https://github.com/YourUsername/osu-beatmap-classifier.git](https://github.com/YourUsername/osu-beatmap-classifier.git)
+git clone [https://github.com/AliKhairy/osu-beatmap-classifier.git](https://github.com/AliKhairy/osu-beatmap-classifier.git)
 cd osu-beatmap-classifier
 ```
 
