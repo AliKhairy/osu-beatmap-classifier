@@ -33,3 +33,48 @@ The project follows a standard machine learning pipeline:
 ```bash
 git clone [https://github.com/YourUsername/osu-beatmap-classifier.git](https://github.com/YourUsername/osu-beatmap-classifier.git)
 cd osu-beatmap-classifier
+```
+
+**2. Set up a virtual environment (recommended):**
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+```
+
+**3. Install dependencies:**
+```bash
+pip install -r requirements.txt
+```
+
+**4. Configure your API Token:**
+You need an API token from `echosu.com`.
+-   Create a file named `.env` in the root of the project directory.
+-   Add your token to this file like so:
+    ```
+    ECHO_API_TOKEN="YourApiTokenHere"
+    ```
+
+**5. Prepare Beatmap Folders:**
+The application uses two folders for `.osu` files:
+-   `downloads/`: Used by `rebuild_from_downloaded.py` to process local maps.
+-   `songs/`: Used by the interactive prediction menu in `main.py` to find maps for testing.
+
+Create these folders if they don't exist and place some `.osu` files inside them.
+
+## Usage
+
+The main entry point is `main.py`. You can run it from the command line:
+
+```bash
+python main.py
+```
+
+This will launch an interactive menu that guides you through the following options:
+-   **Build Dataset & Train:** If no model exists, it will automatically start the process.
+-   **Predict Tags**: Analyze a single `.osu` file from your `songs` folder.
+-   **Test Model**: Run predictions on multiple maps to see the model's performance.
+-   **Retrain/Rebuild**: Update the model or rebuild the entire dataset from scratch.
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.
