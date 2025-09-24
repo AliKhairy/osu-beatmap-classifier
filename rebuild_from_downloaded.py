@@ -25,7 +25,7 @@ from tag_scraper import tag_counts, filter_tags
 # --- Configuration ---
 # Load environment variables from the .env file (e.g., for API keys).
 load_dotenv()
-ECHO_TOKEN = os.getenv("ECHO_API_TOKEN")
+ECHO_API_TOKEN = os.getenv("ECHO_API_TOKEN")
 
 # The folder containing your collection of .osu files to be processed.
 LOCAL_OSU_FOLDER = "downloads"
@@ -38,7 +38,7 @@ MAX_MAP_MINUTES = 6.1
 
 def rebuild():
     """Main function to orchestrate the dataset rebuilding process."""
-    if not ECHO_TOKEN:
+    if not ECHO_API_TOKEN:
         print("Error: ECHO_API_TOKEN not found. Please create a .env file.")
         return
 
@@ -50,7 +50,7 @@ def rebuild():
             f"Error: Folder '{LOCAL_OSU_FOLDER}' not found. Please create it and add .osu files.")
         return
 
-    echo_api = EchoOsuAPI(ECHO_TOKEN)
+    echo_api = EchoOsuAPI(ECHO_API_TOKEN)
     new_dataset = []
     osu_files = [f for f in os.listdir(LOCAL_OSU_FOLDER) if f.endswith('.osu')]
     total_files = len(osu_files)

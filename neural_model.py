@@ -415,7 +415,7 @@ class ImprovedBeatmapClassifier:
             print(f"Error: Failed to save model. {e}")
             return False
 
-    def predict_tags(self, osu_file_path, threshold=0.3):
+    def predict_tags(self, osu_file_path, threshold=0.27):
         """
         Predicts tags for a single .osu file.
 
@@ -466,7 +466,7 @@ class ImprovedBeatmapClassifier:
 
         return predicted_tags if predicted_tags else ["No tags above threshold."]
 
-    def test_multiple_maps(self, songs_folder="songs", threshold=0.3, max_maps=10):
+    def test_multiple_maps(self, songs_folder="songs", threshold=0.27, max_maps=10):
         """
         A utility function to run predictions on multiple maps in a folder.
         """
