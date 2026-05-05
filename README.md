@@ -9,11 +9,11 @@ This tool can be used to automatically tag a library of beatmaps, assist mappers
 ## Features
 
 -   **Data Collection**: Builds a dataset by downloading beatmap info and tags from the Echo API.
--   **Local Processing**: Can also process a local folder of `.osu` files to build or supplement a dataset.
--   **Advanced Feature Extraction**: Analyzes hit object data to extract meaningful features like stream scores, finger control metrics, and pattern instability.
--   **Neural Network Model**: Uses a TensorFlow/Keras model to classify beatmaps into multiple tag categories.
--   **Model Training & Retraining**: Full pipeline for training, saving, and retraining the model with new or corrected data.
--   **Interactive CLI**: A command-line interface to easily train the model, test it, and predict tags for new maps.
+-   **Advanced Feature Extraction**: Analyzes hit object data to extract 115 meaningful geometric features, including stream purity, finger control metrics, and global snap variance.
+-   **Deep Learning Architecture**: Uses a TensorFlow/Keras Dense Neural Network to classify beatmaps into multiple overlapping tag categories.
+-   **5-Model Ensemble Learning**: Features a robust voting classifier that trains 5 distinct neural networks simultaneously, reducing variance and correcting single-model bias on subjective tags.
+-   **Deterministic Feature Injection**: Hard-coded mechanical rules (e.g., forcing the "streams" tag if a 15+ note sequence is detected) to prevent the black-box AI from missing absolute geometric truths.
+-   **Interactive CLI**: A command-line interface to easily train models, evaluate ensembles, and predict tags for local `.osu` files.
 
 ## How It Works
 
