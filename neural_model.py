@@ -119,19 +119,10 @@ class ImprovedBeatmapClassifier:
 
     def extract_meaningful_features(self, hit_objects):
         """
-        Converts a list of hit objects into a numerical feature vector.
-
-        This is the core of the feature engineering process, calculating metrics
-        related to rhythm, spacing, density, and patterns.
-
-        Args:
-            hit_objects (list): A list of hit objects for a single section.
-
-        Returns:
-            np.array: A NumPy array of 35 calculated features.
+        Converts a list of hit objects into a numerical feature vector,
+        incorporating Global Snap Variance to detect complex rhythms.
         """
-        feature_count = 35
-        # Require at least 5 objects to extract meaningful pattern data.
+        feature_count = 51
         if not hit_objects or len(hit_objects) < 5:
             return np.zeros(feature_count)
 
@@ -144,100 +135,188 @@ class ImprovedBeatmapClassifier:
         if total_duration == 0:
             return np.zeros(feature_count)
 
-        # --- Foundational Metrics ---
         objects_per_sec = num_objects / total_duration
         time_gaps = np.diff(times)
-        time_gaps[time_gaps == 0] = 1  # Avoid division by zero
+        time_gaps[time_gaps == 0] = 1 
         distances = np.linalg.norm(np.diff(positions, axis=0), axis=1)
 
         features = []
 
-        # --- Stream and Tapping Analysis ---
-        # A time gap < 160ms corresponds to rhythms faster than ~187 BPM 1/4 notes, a common streaming threshold.
-        dense_indices = np.where(time_gaps < 160)[0]
-        tapping_density = len(dense_indices) / \
-            num_objects if num_objects > 0 else 0
-
-        rhythm_instabilities, spacing_instabilities, pure_stream_notes = [], [], 0
-        if len(dense_indices) > 0:
-            # Group consecutive dense notes into bursts/streams.
-            groups = np.split(dense_indices, np.where(
-                np.diff(dense_indices) != 1)[0] + 1)
-            for group in groups:
-                if len(group) < 2:
-                    continue
-                rhythm_std = np.std(time_gaps[group])
-                spacing_std = np.std(distances[group])
-                rhythm_instabilities.append(rhythm_std)
-                spacing_instabilities.append(spacing_std)
-                # "Pure" streams have very consistent rhythm (low std dev) and spacing.
-                if rhythm_std < 7 and spacing_std < 40:
-                    pure_stream_notes += len(group) + 1
-
-        avg_rhythm_instability = np.mean(
-            rhythm_instabilities) if rhythm_instabilities else 0
-        avg_spacing_instability = np.mean(
-            spacing_instabilities) if spacing_instabilities else 0
-        # Measures how often sliders interrupt dense tapping patterns.
-        slider_disruption_rate = np.sum(
-            is_slider[1:-1] & (time_gaps[:-1] < 160) & (time_gaps[1:] < 160)) / num_objects
-        # A composite score for patterns requiring precise finger control (complex rhythms, inconsistent spacing).
-        finger_control_score = (avg_rhythm_instability * 1.2) + \
-            (avg_spacing_instability * 0.3) + (slider_disruption_rate * 3.0)
-        # The ratio of "pure" stream notes to all dense notes. High values indicate clean streams.
-        stream_purity_ratio = pure_stream_notes / \
-            len(dense_indices) if len(dense_indices) > 0 else 0
-        # A score rewarding dense and pure stream patterns.
-        stream_score = tapping_density * (stream_purity_ratio ** 2)
-
-        # A stricter definition of streams (e.g., > 135ms or >222 BPM) and length.
-        formal_stream_notes = 0
+        # --- ABSOLUTE SEQUENCE TRACKING (The Hybrid Fix) ---
+        sequence_lengths = []
         current_len = 0
-        for is_stream in (time_gaps < 135):
-            if is_stream:
+        
+        # Distance < 120 ensures we don't count high-BPM cross-screen jumps as "streams".
+        for gap, dist in zip(time_gaps, distances):
+            if gap < 165 and dist < 120:
                 current_len += 1
             else:
-                if current_len >= 8:
-                    formal_stream_notes += current_len + 1
+                if current_len > 0:
+                    sequence_lengths.append(current_len + 1)
                 current_len = 0
-        if current_len >= 8:
-            formal_stream_notes += current_len + 1
-        formal_stream_ratio = formal_stream_notes / num_objects
+        if current_len > 0:
+            sequence_lengths.append(current_len + 1)
 
-        features.extend([
-            stream_score, finger_control_score, tapping_density, stream_purity_ratio,
-            avg_rhythm_instability, avg_spacing_instability, slider_disruption_rate, formal_stream_ratio
-        ])
+        burst_count = sum(1 for l in sequence_lengths if 3 <= l <= 7)
+        stream_count = sum(1 for l in sequence_lengths if l >= 8)
+        # --- VARIABLE STREAMS (Spacing Variance) ---
+        # Find the maximum spacing instability within any single stream
+        rhythm_instabilities, spacing_instabilities = [], []
+        dense_indices = np.where(time_gaps < 165)[0]
+        max_stream_spacing_variance = 0
+        if len(dense_indices) > 0:
+            groups = np.split(dense_indices, np.where(np.diff(dense_indices) != 1)[0] + 1)
+            for group in groups:
+                if len(group) >= 8: # If it's a stream
+                    stream_spacing_std = np.std(distances[group])
+                    max_stream_spacing_variance = max(max_stream_spacing_variance, stream_spacing_std)
 
-        # --- General Pattern and Flow Analysis ---
+        # --- BUZZ SLIDERS ---
+        # sliders with > 3 repeats (slides > 4 means it goes back and forth multiple times)
+        buzz_slider_count = 0
+        for obj in hit_objects:
+            if obj[4] is not None: # is slider
+                slides = obj[6]
+                length = obj[7]
+                # High repeats + short pixel length = buzz slider
+                if slides >= 4 and length < 100: 
+                    buzz_slider_count += 1
+        max_continuous_stream = max(sequence_lengths) if sequence_lengths else 0
+        total_stream_notes = sum(l for l in sequence_lengths if l >= 8)
+
+        # --- GLOBAL SNAP VARIANCE (The Finger Control/Tech Fix) ---
+        # Detects when a mapper shifts between 1/2, 1/3, 1/4, and 1/6 snaps.
+        active_gaps = time_gaps[time_gaps < 750] # Focus on active gameplay, ignore breaks
+        if len(active_gaps) > 1:
+            # Calculate the absolute difference between consecutive gaps
+            gap_diffs = np.abs(np.diff(active_gaps))
+            # If the gap changes by >15ms, it's a deliberate rhythm/snap change
+            rhythm_change_ratio = np.sum(gap_diffs > 15) / len(active_gaps)
+            global_rhythm_variance = np.std(active_gaps)
+        else:
+            rhythm_change_ratio = 0
+            global_rhythm_variance = 0
+
+        # --- Local Instability Metrics ---
+        rhythm_instabilities, spacing_instabilities = [], []
+        dense_indices = np.where(time_gaps < 165)[0]
+        
+        if len(dense_indices) > 0:
+            groups = np.split(dense_indices, np.where(np.diff(dense_indices) != 1)[0] + 1)
+            for group in groups:
+                if len(group) < 2: continue
+                rhythm_instabilities.append(np.std(time_gaps[group]))
+                spacing_instabilities.append(np.std(distances[group]))
+
+        avg_rhythm_instability = np.mean(rhythm_instabilities) if rhythm_instabilities else 0
+        avg_spacing_instability = np.mean(spacing_instabilities) if spacing_instabilities else 0
+        slider_disruption_rate = np.sum(is_slider[1:-1] & (time_gaps[:-1] < 160) & (time_gaps[1:] < 160)) / num_objects
+        finger_control_score = (avg_rhythm_instability * 1.2) + (avg_spacing_instability * 0.3) + (slider_disruption_rate * 3.0)
+
+        # --- MICRO-PATTERNS & GEOMETRY ---
         slider_ratio = np.sum(is_slider) / num_objects
+        
+        # Angle Buckets (in radians. Pi = 3.14 = 180 degrees)
+        sharp_angles, square_angles, wide_angles, linear_angles = 0, 0, 0, 0
         angles = np.array([])
+        
         if num_objects > 2:
             v1 = positions[1:-1] - positions[:-2]
             v2 = positions[2:] - positions[1:-1]
             norm_prod = np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1)
             valid_indices = norm_prod > 0
+            
             if np.any(valid_indices):
-                # Calculate the angle between three consecutive points to measure path curvature.
-                cos_angles = np.clip(np.sum(
-                    v1[valid_indices] * v2[valid_indices], axis=1) / norm_prod[valid_indices], -1.0, 1.0)
+                cos_angles = np.clip(np.sum(v1[valid_indices] * v2[valid_indices], axis=1) / norm_prod[valid_indices], -1.0, 1.0)
                 angles = np.arccos(cos_angles)
+                
+                # Categorize the angles
+                sharp_angles = np.sum(angles < 1.04)   # < 60 degrees (Snap Aim / Awkward)
+                square_angles = np.sum((angles > 1.3) & (angles < 1.8)) # ~90 degrees (Square Jumps)
+                wide_angles = np.sum((angles > 2.09) & (angles < 2.6))  # > 120 degrees (Flow Aim)
+                linear_angles = np.sum(angles > 2.7)   # ~180 degrees (Linear Aim / 1-2 Jumps)
 
-        features.extend([
-            num_objects, objects_per_sec,
+        # Vertical Jumps: Large Y movement, tiny X movement
+        dx = np.abs(np.diff(positions[:, 0]))
+        dy = np.abs(np.diff(positions[:, 1]))
+        vertical_jumps = np.sum((dy > 120) & (dx < 40))
+
+        # Perfect Overlaps: Object is placed exactly where an object was 2 steps ago
+        perfect_overlaps = 0
+        if num_objects > 2:
+            dist_2_steps_back = np.linalg.norm(positions[2:] - positions[:-2], axis=1)
+            perfect_overlaps = np.sum(dist_2_steps_back < 10) # Less than 10 pixels away
+
+        # --- TRUE LINEAR PATTERN DETECTION (Collinearity) ---
+        # Look at chunks of 4 consecutive hit objects.
+        # If the points form a long, thin bounding box, they are a linear pattern.
+        true_linear_sequences = 0
+        if num_objects >= 4:
+            for i in range(num_objects - 3):
+                chunk = positions[i:i+4]
+                
+                # Find the bounding box width and height
+                x_spread = np.max(chunk[:, 0]) - np.min(chunk[:, 0])
+                y_spread = np.max(chunk[:, 1]) - np.min(chunk[:, 1])
+                
+                # We need to find the principal axis (the length of the line)
+                # and the orthogonal spread (how "fat" the line is).
+                # A simple approximation: max spread vs min spread.
+                # However, a perfect diagonal has equal X and Y spread!
+                
+                # Better approach: check the distance from points to the line connecting start and end.
+                start_pt = chunk[0]
+                end_pt = chunk[-1]
+                line_vec = end_pt - start_pt
+                line_len = np.linalg.norm(line_vec)
+                
+                if line_len > 50: # The sequence must actually cover some distance
+                    # Normalize the line vector
+                    line_dir = line_vec / line_len
+                    # Normal vector (perpendicular to the line)
+                    normal_vec = np.array([-line_dir[1], line_dir[0]])
+                    
+                    # Calculate how far the middle two points deviate from the straight line
+                    dev1 = np.abs(np.dot(chunk[1] - start_pt, normal_vec))
+                    dev2 = np.abs(np.dot(chunk[2] - start_pt, normal_vec))
+                    
+                    # If both middle points are very close to the line (less than 15 pixels off), it's linear.
+                    if dev1 < 15 and dev2 < 15:
+                        true_linear_sequences += 1
+
+        # --- THE FINAL FEATURE VECTOR (Exactly 29 Features) ---
+        # We define this as a direct list to strictly control the indices for aggregation.
+        features = [
+            # 0-3: Stream Counters
+            burst_count, stream_count, max_continuous_stream, total_stream_notes,
+            # 4-5: Global Rhythm (Finger Control)
+            rhythm_change_ratio, global_rhythm_variance,
+            # 6-7: Slider & Stream Spacing Variance
+            max_stream_spacing_variance, buzz_slider_count,
+            # 8-11: Local Instability (Tech/Reading)
+            finger_control_score, avg_rhythm_instability, avg_spacing_instability, slider_disruption_rate,
+            # 12-16: Distance & Jump Geography
+            num_objects, objects_per_sec, 
             np.mean(distances) if distances.size > 0 else 0,
             np.std(distances) if distances.size > 0 else 0,
-            # 95th percentile captures jump difficulty.
-            np.percentile(distances, 95) if distances.size > 0 else 0,
-            np.mean(time_gaps),
-            np.std(time_gaps),
-            slider_ratio,
-            np.mean(angles) if angles.size > 0 else 0,  # Average angle change.
-            # High std dev in angles indicates erratic aim patterns (tech).
-            np.std(angles) if angles.size > 0 else 0
-        ])
+            np.percentile(distances, 95) if distances.size > 0 else 0, # <-- This is now Index 16
+            # 17-19: Time Gaps & Base Sliders
+            np.mean(time_gaps), np.std(time_gaps), slider_ratio,
+            # 20-21: Base Angles
+            np.mean(angles) if angles.size > 0 else 0,
+            np.std(angles) if angles.size > 0 else 0,
+            # 22-28: Micro-patterns & Geometry
+            sharp_angles / num_objects if num_objects > 0 else 0,
+            square_angles / num_objects if num_objects > 0 else 0,
+            wide_angles / num_objects if num_objects > 0 else 0,
+            linear_angles / num_objects if num_objects > 0 else 0,
+            vertical_jumps / num_objects if num_objects > 0 else 0,
+            perfect_overlaps / num_objects if num_objects > 0 else 0,
+            true_linear_sequences / num_objects if num_objects > 0 else 0
+        ]
 
-        # Pad with zeros if any features are missing to ensure a consistent vector length.
+        return np.array(features)
+
         while len(features) < feature_count:
             features.append(0)
 
@@ -285,50 +364,25 @@ class ImprovedBeatmapClassifier:
 
         features_np = np.array(section_features_list)
 
-        # --- Derived Tech Score ---
-        # Combines features that indicate technical difficulty.
-        section_tech_scores = (features_np[:, IDX_AVG_RHYTHM_INSTABILITY] * 1.5) + \
-                              (features_np[:, IDX_AVG_SPACING_INSTABILITY] * 1.0) + \
-                              (features_np[:, IDX_STD_ANGLES] * 0.8) + \
-                              (features_np[:, IDX_SLIDER_RATIO] * 0.5) + \
-                              (features_np[:, IDX_STD_TIME_GAPS] * 0.7)
-
-        # --- Derived Flow Score ---
-        # A more complex score rewarding smooth, stream-like patterns while penalizing erratic ones.
-        flow_positive = (features_np[:, IDX_STREAM_SCORE] * 1.5) + \
-                        (features_np[:, IDX_STREAM_PURITY_RATIO] * 1.0) + \
-                        (features_np[:, IDX_FORMAL_STREAM_RATIO] * 1.0) + \
-                        (1 / (1 + features_np[:, IDX_AVG_RHYTHM_INSTABILITY] * 0.5)) + \
-                        (1 / (1 + features_np[:, IDX_AVG_SPACING_INSTABILITY] * 0.5)) + \
-                        (1 / (1 + features_np[:, IDX_STD_ANGLES] * 0.5))
-        flow_negative = (features_np[:, IDX_FINGER_CONTROL_SCORE] * 0.5) + \
-                        (features_np[:, IDX_PERCENTILE_DIST_95] *
-                         0.01)  # Penalize large jumps.
-        section_flow_scores = flow_positive - flow_negative
-
         # --- Hybrid Flags ---
-        # Binary flags indicating if a map contains sections with peak difficulty in certain skills.
-        has_peak_stream_section = 1 if np.max(
-            features_np[:, IDX_STREAM_SCORE]) > 0.15 else 0
-        has_peak_fc_section = 1 if np.max(
-            features_np[:, IDX_FINGER_CONTROL_SCORE]) > 1.5 else 0
-        has_peak_jump_section = 1 if np.max(
-            features_np[:, IDX_MEAN_DISTANCE]) > 200 else 0
+        # IDX 2 is 'max_continuous_stream'
+        has_peak_stream_section = 1 if np.max(features_np[:, 2]) >= 12 else 0
+        
+        # IDX 16 is 'percentile_dist_95' (large jumps)
+        has_peak_jump_section = 1 if np.max(features_np[:, 16]) > 180 else 0
+        
+        # Explicit Hybrid Override
         is_stream_jump_hybrid = 1 if has_peak_stream_section and has_peak_jump_section else 0
 
         # --- Final Aggregation ---
-        # Combine max, mean, and std of all features across all sections, plus derived scores and flags.
-        # This creates a comprehensive profile of the entire beatmap.
+        # Combine max, mean, and std of all base features across all sections.
+        # We removed manual heuristic scores to allow the Keras Dense layers to 
+        # map the non-linear relationships natively.
         aggregated_vector = np.concatenate([
             np.max(features_np, axis=0),
             np.mean(features_np, axis=0),
             np.std(features_np, axis=0),
-            np.array([np.max(section_tech_scores), np.mean(
-                section_tech_scores), np.std(section_tech_scores)]),
-            np.array([np.max(section_flow_scores), np.mean(
-                section_flow_scores), np.std(section_flow_scores)]),
-            np.array([has_peak_stream_section, has_peak_fc_section,
-                     has_peak_jump_section, is_stream_jump_hybrid])
+            np.array([has_peak_stream_section, has_peak_jump_section, is_stream_jump_hybrid])
         ])
 
         return aggregated_vector
@@ -417,14 +471,8 @@ class ImprovedBeatmapClassifier:
 
     def predict_tags(self, osu_file_path, threshold=0.27):
         """
-        Predicts tags for a single .osu file.
-
-        Args:
-            osu_file_path (str): The path to the .osu file to analyze.
-            threshold (float): The probability threshold (0.0 to 1.0) required to assign a tag.
-
-        Returns:
-            list: A list of predicted tag strings.
+        Predicts tags for a single .osu file, with post-processing 
+        to correct neural network bias on hybrid maps.
         """
         if not self.is_trained:
             if not self.load_model():
@@ -433,12 +481,9 @@ class ImprovedBeatmapClassifier:
         parser = OsuFileParser(osu_file_path)
         parser.read_file()
         metadata = parser.get_metadata()
-        print(
-            f"\nPredicting for: {metadata.get('Artist')} - {metadata.get('Title')} [{metadata.get('Version')}]")
+        print(f"\nPredicting for: {metadata.get('Artist')} - {metadata.get('Title')} [{metadata.get('Version')}]")
 
-        # Use the same feature extraction pipeline as in training.
-        sections = self.split_beatmap_into_sections(
-            parser.extract_raw_hit_objects())
+        sections = self.split_beatmap_into_sections(parser.extract_raw_hit_objects())
         if not sections:
             return ["Map is too short or has no playable sections."]
 
@@ -446,24 +491,41 @@ class ImprovedBeatmapClassifier:
         if aggregated_vector is None:
             return ["Feature extraction failed for this map."]
 
-        # Reshape for a single prediction and scale using the already-fitted scaler.
+        # Keep a copy of the unscaled features to use for Expert Rules
+        raw_features = aggregated_vector.copy()
+
         aggregated_vector = aggregated_vector.reshape(1, -1)
         X_scaled = self.scaler.transform(aggregated_vector)
-
-        # Get prediction probabilities from the model.
         probabilities = self.model.predict(X_scaled, verbose=0)[0]
 
         predicted_tags = []
         print("\nPrediction Probabilities:")
-        # Display each tag and its corresponding probability.
         for i, tag in enumerate(self.label_binarizer.classes_):
             prob = probabilities[i]
             is_predicted = prob >= threshold
-            print(
-                f"  [{'x' if is_predicted else ' '}] {tag:<20} | Probability: {prob:.3f}")
+            print(f"  [{'x' if is_predicted else ' '}] {tag:<20} | Probability: {prob:.3f}")
             if is_predicted:
                 predicted_tags.append(tag)
 
+        # --- EXPERT SYSTEM POST-PROCESSING (Hybrid Bias Correction) ---
+        max_stream_length = raw_features[2] 
+        
+        # We only force the stream tag if the map is NOT an alt map.
+        # Find the probability of 'alternating' to act as a safety check.
+        alt_prob = 0.0
+        if 'alternating' in self.label_binarizer.classes_:
+            alt_index = list(self.label_binarizer.classes_).index('alternating')
+            alt_prob = probabilities[alt_index]
+
+        # If it's a 15+ note sequence AND it's not strongly an alt map
+        if max_stream_length >= 15 and alt_prob < 0.35:
+            if 'streams' not in predicted_tags and 'streams' in self.label_binarizer.classes_:
+                predicted_tags.append('streams')
+                print(f"\n[!] OVERRIDE: Network bias corrected. Map contains a {int(max_stream_length)}-note stream. Forcing 'streams' tag.")
+
+        # Sort alphabetically for clean output
+        predicted_tags.sort()
+        
         return predicted_tags if predicted_tags else ["No tags above threshold."]
 
     def test_multiple_maps(self, songs_folder="songs", threshold=0.27, max_maps=10):

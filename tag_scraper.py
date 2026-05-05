@@ -83,13 +83,15 @@ def filter_tags(api_tags, all_tag_counts):
     # This list ensures certain important (but potentially low-usage) tags are always kept.
     manual_include = [
         'dense', 'geometric', 'linear patterns',
-        'linear aim', 'slider snap', 'berserk jumps'
+        'linear aim', 'star jumps', 'triangle jumps',
+        'tech'
     ]
 
     # This list removes common but often ambiguous or unhelpful tags, regardless of their popularity.
     manual_exclude = [
         'marathon', 'farm', 'unconventional farm',
-        'dt farm', 'classic'
+        'dt farm', 'classic', 'gimmick', 'aimslop',
+        'anti-aim', 'precision'
     ]
 
     filtered = []
@@ -97,18 +99,25 @@ def filter_tags(api_tags, all_tag_counts):
     min_usage_threshold = 50
 
     for tag_info in api_tags:
-        tag_name = tag_info['tag']
-
+        tag_name = tag_info['tag'].strip().lower()  # Normalize the tag name for consistent processing.
         # Rule 1: Immediately skip any tag that is in the exclusion list.
         if tag_name in manual_exclude:
             continue
+        
+        # Merge to get more data so that AI can predict linear aim more effectively, since linear stuff is often underrepresented.
+        if tag_name == "linear patterns":
+            tag_name = "linear aim"
+        
+        # Same thing for geometric patterns, which are often underrepresented and can be confused with general "aim" tags.
+        if tag_name == "star jumps" or tag_name == "triangle jumps":
+            tag_name = "geometric"
 
         # Rule 2: Check if the tag meets the usage threshold OR is in the manual include list.
         total_count = all_tag_counts.get(tag_name, 0)
         if tag_name in manual_include or total_count >= min_usage_threshold:
             filtered.append(tag_name)
 
-    return filtered
+    return set(filtered)
 
 
 # This block runs only when the script is executed directly.

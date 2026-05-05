@@ -6,12 +6,13 @@ env/
 
 # Data and model files - Do not commit these to GitHub!
 ml_dataset.json
-beatmap_classifier.pkl
+*.pkl
 corrections.json
+*.keras
+evaluation.py
 
 # Local folders for beatmaps
 downloads/
-songs/
 
 # Secrets file
 .env
@@ -20,3 +21,4 @@ songs/
 .idea/
 .vscode/
 .DS_Store
+*.png

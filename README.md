@@ -51,7 +51,9 @@ You need an API token from `echosu.com`.
 -   Create a file named `.env` in the root of the project directory.
 -   Add your token to this file like so:
     ```
-    ECHO_API_TOKEN="YourApiTokenHere"
+    ECHO_API_TOKEN="YourEchosuApiTokenHere"
+    OSU_CLIENT_ID = 'YourID'
+    OSU_CLIENT_SECRET = 'YourOsuApiTokenHere'
     ```
 
 **5. Prepare Beatmap Folders:**

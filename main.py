@@ -1,13 +1,16 @@
-# main.py (Final Version with Offset)
+# main.py (Final Version with Offset and Ensemble)
 """
 Main orchestrator for the osu! Beatmap Classifier.
-Handles dataset building, model training, and predictions.
+Handles dataset building, model training, predictions, and ensemble evaluation.
 """
 import os
 import pickle
 from dataset_builder import build_full_dataset
 from neural_model import ImprovedBeatmapClassifier
 from rebuild_from_downloaded import rebuild
+
+# NEW IMPORT: Pull in the ensemble script we just wrote
+from ensemble_evaluator import train_and_evaluate_ensemble
 
 # The number of maps to attempt to download when building a new dataset.
 DATA_SET_SIZE = 1800
@@ -30,17 +33,31 @@ def main():
         choice = input(
             "Select an option:\n"
             "1. Use existing model for predictions\n"
-            "2. Retrain model with the current dataset\n"
-            "3. Rebuild dataset and retrain model\n"
-            "4. Test model on multiple maps\n"
+            "2. Run Ensemble Evaluation (Trains 5 Models)\n"
+            "3. Rebuild dataset and retrain single model\n"
+            "4. Test single model on multiple maps\n"
             "Choice (1-4): "
         )
         if choice == '1' or choice == '4':
             print("Loading existing model...")
             pass
+            
         elif choice == '2':
-            print("Retraining model with existing dataset...")
-            classifier.train()
+            # --- THE NEW ENSEMBLE HOOK ---
+            print("\n" + "="*40)
+            print("INITIATING ENSEMBLE LEARNING PROTOCOL")
+            print("="*40)
+            print("Warning: Training 5 distinct Neural Networks in sequence.")
+            print("This will take approximately 5x longer than standard training.")
+            
+            # Fire the ensemble script
+            train_and_evaluate_ensemble(num_models=5)
+            
+            print("\nEnsemble evaluation complete! Check the F1-Scores above.")
+            # Return instead of going to the prediction loop, since the ensemble 
+            # models are kept in memory just for the evaluation report.
+            return 
+            
         elif choice == '3':
             print("Rebuilding dataset and model...")
             cleanup_files()
@@ -55,6 +72,7 @@ def main():
             # Pass the offset to the build function.
             build_full_dataset(max_maps=DATA_SET_SIZE, offset=start_offset)
             classifier.train()
+            
         elif choice == '4':
             classifier.test_multiple_maps(max_maps=10, threshold=0.25)
             return
@@ -81,7 +99,17 @@ def main():
 
 def prediction_loop(classifier):
     """Handles the interactive prediction menu."""
+    from ensemble_evaluator import load_ensemble_assets, predict_with_ensemble, test_multiple_maps_with_ensemble
+    
     print("\n--- Prediction Mode ---")
+    
+    # Check if ensemble is available on disk
+    ensemble_available = os.path.exists('ensemble_model_1.keras')
+    if ensemble_available:
+        print("[!] 5-Model Ensemble detected. Set as default predictor.")
+    else:
+        print("[!] Single model detected.")
+
     while True:
         print("\nOptions:")
         print("1. Predict tags for a single map")
@@ -91,12 +119,16 @@ def prediction_loop(classifier):
         choice = input("Choice (1-3): ")
 
         if choice == '1':
-            predict_single_map(classifier)
+            predict_single_map(classifier, ensemble_available)
         elif choice == '2':
             try:
                 threshold = float(input("Enter prediction threshold (e.g., 0.27): ") or "0.27")
                 max_maps = int(input("Enter number of maps to test (e.g., 5): ") or "5")
-                classifier.test_multiple_maps(max_maps=max_maps, threshold=threshold)
+                
+                if ensemble_available:
+                    test_multiple_maps_with_ensemble(max_maps=max_maps, threshold=threshold)
+                else:
+                    classifier.test_multiple_maps(max_maps=max_maps, threshold=threshold)
             except ValueError:
                 print("Invalid input. Please enter a number.")
         elif choice == '3':
@@ -106,7 +138,7 @@ def prediction_loop(classifier):
             print("Invalid choice. Please enter 1, 2, or 3.")
 
 
-def predict_single_map(classifier):
+def predict_single_map(classifier, ensemble_available):
     """Guides the user through selecting and predicting a single beatmap."""
     songs_folder = "songs"
     if not os.path.exists(songs_folder):
@@ -137,7 +169,15 @@ def predict_single_map(classifier):
 
         if os.path.exists(map_path):
             threshold = float(input("Enter prediction threshold (e.g., 0.27): ") or "0.27")
-            predicted_tags = classifier.predict_tags(map_path, threshold=threshold)
+            
+            # --- DEFAULT TO ENSEMBLE ---
+            if ensemble_available:
+                from ensemble_evaluator import load_ensemble_assets, predict_with_ensemble
+                assets = load_ensemble_assets()
+                predicted_tags = predict_with_ensemble(map_path, threshold, assets, classifier)
+            else:
+                predicted_tags = classifier.predict_tags(map_path, threshold=threshold)
+                
             print(f"\nFinal prediction: {predicted_tags}")
         else:
             print(f"Error: File not found at '{map_path}'")

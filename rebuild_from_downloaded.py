@@ -46,8 +46,7 @@ def rebuild():
         f"Starting dataset rebuild from local files in '{LOCAL_OSU_FOLDER}'...")
 
     if not os.path.exists(LOCAL_OSU_FOLDER):
-        print(
-            f"Error: Folder '{LOCAL_OSU_FOLDER}' not found. Please create it and add .osu files.")
+        os.makedirs('downloads')
         return
 
     echo_api = EchoOsuAPI(ECHO_API_TOKEN)
@@ -108,7 +107,7 @@ def rebuild():
 
             # Step 5: (Optional) Clean up redundant or conflicting tags.
             # For example, 'stream section' is more specific than 'streams', so we prefer it.
-            cleaned_tags = list(filtered_tags)
+            cleaned_tags = list(set(filtered_tags))
             if 'stream section' in cleaned_tags:
                 if 'streams' in cleaned_tags:
                     cleaned_tags.remove('streams')
