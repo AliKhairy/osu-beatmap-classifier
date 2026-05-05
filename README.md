@@ -17,11 +17,12 @@ This tool can be used to automatically tag a library of beatmaps, assist mappers
 
 ## How It Works
 
-The project follows a standard machine learning pipeline:
+The project follows a standard, modular machine learning pipeline:
 1.  **Dataset Construction** (`dataset_builder.py`, `rebuild_from_downloaded.py`): Beatmap IDs and tags are fetched from the Echo API. The corresponding `.osu` files are downloaded.
-2.  **Parsing & Feature Extraction** (`osu_parser.py`, `neural_model.py`): The `.osu` files are parsed to extract hit object data (positions, times, types). This raw data is then transformed into a high-dimensional feature vector representing musical and positional patterns.
-3.  **Model Training** (`neural_model.py`): The feature vectors and their corresponding tags are used to train a multi-label classification neural network. The trained model (including the data scaler and label binarizer) is saved to `beatmap_classifier.pkl`.
-4.  **Prediction** (`main.py`, `predict_for_overlay.py`): The trained model can be loaded to predict tags for any new `.osu` file.
+2.  **Parsing & Feature Extraction** (`osu_parser.py`, `neural_model.py`): The `.osu` files are parsed to extract raw coordinates. This is transformed into a high-dimensional feature vector representing micro-patterns and spatial flow.
+3.  **Model Training** (`neural_model.py`): The feature vectors train a multi-label classification neural network. The trained baseline model is saved to `beatmap_classifier.pkl`.
+4.  **Ensemble Evaluation** (`ensemble_evaluator.py`): Trains 5 independent models (`ensemble_model_1.keras` to `5`) and aggregates their probabilities to drastically improve F1-Scores on minority tags.
+5.  **Prediction** (`main.py`, `predict_for_overlay.py`): Predicts tags for any new `.osu` file, automatically prioritizing the 5-model ensemble if it detects one on disk.
 
 ## Setup and Installation
 
