@@ -123,9 +123,6 @@ def retrain_with_corrections(project_path='.'):
     success = classifier.train(dataset_path)
 
     if success:
-        # Optional: You could uncomment the next line to automatically delete
-        # the corrections file after it has been successfully applied.
-        # os.remove(corrections_path)
         return f"\nModel retrained successfully on {len(updated_dataset)} maps!"
     else:
         return "\nModel retraining failed."

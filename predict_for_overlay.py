@@ -59,7 +59,7 @@ def main():
 
         # --- Step 3: Run prediction ---
         # A lower threshold might be suitable for an overlay to be more inclusive.
-        predicted_tags = classifier.predict_tags(map_path, threshold=0.286)
+        predicted_tags = classifier.predict_tags(map_path, threshold=0.27)
 
         # --- Step 4: Print the result to standard output ---
         if predicted_tags and isinstance(predicted_tags, list):
