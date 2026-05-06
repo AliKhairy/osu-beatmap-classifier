@@ -117,7 +117,7 @@ def filter_tags(api_tags, all_tag_counts):
         if tag_name in manual_include or total_count >= min_usage_threshold:
             filtered.append(tag_name)
 
-    return set(filtered)
+    return list(set(filtered))
 
 
 # This block runs only when the script is executed directly.

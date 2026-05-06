@@ -9,7 +9,7 @@ This tool can be used to automatically tag a library of beatmaps, assist mappers
 ## Features
 
 -   **Data Collection**: Builds a dataset by downloading beatmap info and tags from the Echo API.
--   **Advanced Feature Extraction**: Analyzes hit object data to extract 115 meaningful geometric features, including stream purity, finger control metrics, and global snap variance.
+-   **Advanced Feature Extraction**: Analyzes hit object data to extract 90 meaningful geometric features, including stream purity, finger control metrics, and global snap variance.
 -   **Deep Learning Architecture**: Uses a TensorFlow/Keras Dense Neural Network to classify beatmaps into multiple overlapping tag categories.
 -   **5-Model Ensemble Learning**: Features a robust voting classifier that trains 5 distinct neural networks simultaneously, reducing variance and correcting single-model bias on subjective tags.
 -   **Deterministic Feature Injection**: Hard-coded mechanical rules (e.g., forcing the "streams" tag if a 15+ note sequence is detected) to prevent the black-box AI from missing absolute geometric truths.

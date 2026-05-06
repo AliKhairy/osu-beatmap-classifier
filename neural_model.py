@@ -122,7 +122,7 @@ class ImprovedBeatmapClassifier:
         Converts a list of hit objects into a numerical feature vector,
         incorporating Global Snap Variance to detect complex rhythms.
         """
-        feature_count = 51
+        
         if not hit_objects or len(hit_objects) < 5:
             return np.zeros(feature_count)
 
@@ -316,11 +316,6 @@ class ImprovedBeatmapClassifier:
         ]
 
         return np.array(features)
-
-        while len(features) < feature_count:
-            features.append(0)
-
-        return np.array(features[:feature_count])
 
     def create_neural_network(self, input_dim, num_classes):
         """

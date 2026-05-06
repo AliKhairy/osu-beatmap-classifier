@@ -95,7 +95,7 @@ def build_full_dataset(max_maps=500, offset=0):
 if __name__ == "__main__":
     DATASET_FILENAME = 'ml_dataset.json'
     # How many maps to process in this run.
-    MAPS_TO_PROCESS_IN_RUN = 500
+    MAPS_TO_PROCESS_IN_RUN = 6000
     # Where to start in the full list. Change this to resume.
     # 0 = start from the beginning
     # 500 = skip the first 500 and start there
