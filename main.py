@@ -13,7 +13,7 @@ from rebuild_from_downloaded import rebuild
 from ensemble_evaluator import train_and_evaluate_ensemble
 
 # The number of maps to attempt to download when building a new dataset.
-DATA_SET_SIZE = 1800
+DATA_SET_SIZE = 5000
 
 
 def main():
