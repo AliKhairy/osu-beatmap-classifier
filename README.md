@@ -78,6 +78,44 @@ This will launch an interactive menu that guides you through the following optio
 -   **Test Model**: Run predictions on multiple maps to see the model's performance.
 -   **Retrain/Rebuild**: Update the model or rebuild the entire dataset from scratch.
 
+## Exporting Models for the App (ONNX)
+
+The desktop app (**OsuScoutNew**) does not run Python or Keras. It runs inference
+on-device using ONNX Runtime. Training produces Keras/scikit-learn artifacts; two
+scripts convert those into the exact files the app consumes:
+
+| Training artifact                     | Export script         | App file (`OsuScoutNew/Assets/`) |
+| ------------------------------------- | --------------------- | -------------------------------- |
+| `ensemble_model_1..5.keras`           | `export_to_onnx.py`   | `ensemble_model_1..5.onnx`       |
+| `ensemble_scaler.pkl` + `..._binarizer.pkl` | `extract_config.py` | `model_config.json`              |
+
+**To regenerate the model files after (re)training:**
+```bash
+python export_to_onnx.py   # .keras -> .onnx (tf2onnx, opset 15)
+python extract_config.py   # scaler + binarizer -> model_config.json
+```
+This produces 6 files: `ensemble_model_1.onnx` ... `ensemble_model_5.onnx` and
+`model_config.json`.
+
+## Shipping a Model Update to the App
+
+The app auto-updates via Velopack/GitHub Releases, and the model files are bundled
+into the app (marked `CopyToOutputDirectory` in `OsuScoutNew.csproj`). So shipping a
+new model is the same as shipping any app update:
+
+1. **Retrain** here (`python main.py` -> retrain, or `retrain_model.py`).
+2. **Export** the 6 files (see above).
+3. **Copy** all 6 into `OsuScoutNew/Assets/`, replacing the old ones.
+4. In the app repo: bump the version, `dotnet publish`, `vpk pack`, and upload the
+   release. Users auto-update and receive the new model on next launch.
+
+> **Feature count must stay in sync.** The C# `FeatureExtractor` computes the input
+> vector (currently 90 features) and `OsuClassifier` validates that exact length. If
+> you change the **number or order of features** in `neural_model.py`, you must make
+> the **identical** change in the app's `FeatureExtractor.cs` and retrain. Adding new
+> **tags** (without changing feature count) needs no C# change — the tag list is read
+> from `model_config.json` at runtime.
+
 ## License
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
