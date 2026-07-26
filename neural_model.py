@@ -22,6 +22,11 @@ from osu_parser import OsuFileParser
 # --- Constants ---
 CLASSIFIER_PATH = 'beatmap_classifier.pkl'
 
+# Number of per-section features produced by extract_meaningful_features().
+# Bump this in lockstep whenever you add/remove a feature (and mirror the change
+# in the C# app's FeatureExtractor.cs). The final map vector is FEATURE_COUNT*3 + 3.
+FEATURE_COUNT = 29
+
 # Constants for feature indices to improve readability.
 # This avoids using "magic numbers" when calculating derived scores.
 IDX_STREAM_SCORE = 0
@@ -124,7 +129,7 @@ class ImprovedBeatmapClassifier:
         """
         
         if not hit_objects or len(hit_objects) < 5:
-            return np.zeros(feature_count)
+            return np.zeros(FEATURE_COUNT)
 
         times = np.array([obj[2] for obj in hit_objects])
         positions = np.array([(obj[0], obj[1]) for obj in hit_objects])
@@ -133,7 +138,7 @@ class ImprovedBeatmapClassifier:
 
         total_duration = (times[-1] - times[0]) / 1000.0
         if total_duration == 0:
-            return np.zeros(feature_count)
+            return np.zeros(FEATURE_COUNT)
 
         objects_per_sec = num_objects / total_duration
         time_gaps = np.diff(times)
