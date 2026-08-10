@@ -16,6 +16,31 @@ from tag_scraper import filter_tags, tag_counts
 load_dotenv()
 ECHO_API_TOKEN = os.getenv("ECHO_API_TOKEN")
 
+DATASET_FILENAME = 'ml_dataset.json'
+
+
+def save_dataset(dataset, filename=DATASET_FILENAME):
+    """
+    Write a dataset to disk atomically.
+
+    Atomic means: write to a temp file first, then rename over the target. A
+    rename is a single filesystem operation, so the real file is either the old
+    one or the new one - never a half-written truncation. Matters here because
+    this file costs hours of scraping to produce and a crash mid-write would
+    otherwise destroy it.
+    """
+    if not dataset:
+        print("Refusing to save an empty dataset - leaving the existing file alone.")
+        return False
+
+    tmp = filename + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(dataset, f, indent=2)
+    os.replace(tmp, filename)
+    print(f"Saved {len(dataset)} maps to {filename}.")
+    return True
+
+
 def build_full_dataset(max_maps=500, offset=0):
     if not ECHO_API_TOKEN:
         print("Error: ECHO_API_TOKEN not found.")
@@ -93,7 +118,6 @@ def build_full_dataset(max_maps=500, offset=0):
 
 
 if __name__ == "__main__":
-    DATASET_FILENAME = 'ml_dataset.json'
     # How many maps to process in this run.
     MAPS_TO_PROCESS_IN_RUN = 6000
     # Where to start in the full list. Change this to resume.
@@ -107,8 +131,4 @@ if __name__ == "__main__":
         max_maps=MAPS_TO_PROCESS_IN_RUN, offset=START_OFFSET)
 
     # This will overwrite the dataset file. You can add logic to append if you prefer.
-    with open(DATASET_FILENAME, 'w', encoding='utf-8') as f:
-        json.dump(new_data, f, indent=2)
-
-    print(
-        f"\nDataset construction complete. Saved {len(new_data)} maps to {DATASET_FILENAME}.")
+    save_dataset(new_data)

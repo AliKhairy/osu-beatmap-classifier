@@ -5,7 +5,7 @@ Handles dataset building, model training, predictions, and ensemble evaluation.
 """
 import os
 import pickle
-from dataset_builder import build_full_dataset
+from dataset_builder import build_full_dataset, save_dataset
 from neural_model import ImprovedBeatmapClassifier
 from rebuild_from_downloaded import rebuild
 
@@ -69,8 +69,12 @@ def main():
             except ValueError:
                 start_offset = 0
             
-            # Pass the offset to the build function.
-            build_full_dataset(max_maps=DATA_SET_SIZE, offset=start_offset)
+            # Pass the offset to the build function. build_full_dataset only
+            # RETURNS the dataset - saving it is the caller's job, and forgetting
+            # that here used to throw away the whole scrape and then train on a
+            # file cleanup_files() had already deleted.
+            new_data = build_full_dataset(max_maps=DATA_SET_SIZE, offset=start_offset)
+            save_dataset(new_data)
             classifier.train()
             
         elif choice == '4':
@@ -90,7 +94,8 @@ def main():
         except ValueError:
             start_offset = 0
             
-        build_full_dataset(max_maps=DATA_SET_SIZE, offset=start_offset)
+        new_data = build_full_dataset(max_maps=DATA_SET_SIZE, offset=start_offset)
+        save_dataset(new_data)
         rebuild()
         classifier.train()
 
