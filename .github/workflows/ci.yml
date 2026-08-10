@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: this workflow only reads the repo. If a dependency or action
+# turns out to be malicious, it cannot push commits or publish releases.
+permissions:
+  contents: read
+
+# One run per branch. A new push cancels the previous run instead of queueing
+# behind it, since results for a commit you have already replaced are useless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Build image and smoke-test the CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Buildx is Docker's newer builder. The only reason it is here is that the
+      # default builder cannot export its layer cache anywhere, so every CI run
+      # would reinstall TensorFlow from scratch.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          # Runners are destroyed after every run, so the layer cache is pushed
+          # to GitHub's own cache service and pulled back next time. Unchanged
+          # requirements.txt means the pip layer is reused and the build takes
+          # seconds instead of minutes - the same caching you saw locally, made
+          # to survive a machine that no longer exists.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Keep the image on the runner for the steps below. Without this the
+          # build is verified but the image is discarded, and nothing can run it.
+          load: true
+          push: false
+          tags: osu-classifier:ci
+
+      # Everything below answers: does the entry point actually work? Building
+      # successfully only proves the dependencies installed.
+
+      - name: CLI starts and lists its subcommands
+        run: |
+          # Also proves every module cli.py imports is importable - a syntax
+          # error or a missing dependency surfaces here, not at 3am mid-retrain.
+          docker run --rm osu-classifier:ci --help
+
+      - name: Every subcommand is wired up
+        run: |
+          for verb in build-dataset rebuild train train-ensemble export-onnx predict evaluate; do
+            echo "::group::$verb --help"
+            docker run --rm osu-classifier:ci "$verb" --help
+            echo "::endgroup::"
+          done
+
+      # These assert that FAILURES STILL FAIL. It is the regression that matters
+      # most for the CD work ahead: a command that starts exiting 0 when it
+      # should have errored would let a broken model ship silently, and nothing
+      # else in this workflow would notice.
+      - name: Unknown subcommand is rejected
+        run: |
+          if docker run --rm osu-classifier:ci definitely-not-a-verb; then
+            echo "Expected a non-zero exit for an unknown subcommand, got 0"
+            exit 1
+          fi
+
+      - name: Missing prerequisites exit non-zero
+        run: |
+          # No dataset and no trained models exist in the image - .dockerignore
+          # keeps them out - so both of these must refuse to run.
+          if docker run --rm osu-classifier:ci train; then
+            echo "Expected 'train' to fail with no dataset present, got exit 0"
+            exit 1
+          fi
+          if docker run --rm osu-classifier:ci export-onnx; then
+            echo "Expected 'export-onnx' to fail with no models present, got exit 0"
+            exit 1
+          fi
+
+      # A guard against the .dockerignore silently breaking. If .env or the
+      # dataset ever get baked into a layer, the secret is permanently readable
+      # by anyone who pulls the image, so this is checked rather than trusted.
+      - name: No secrets or bulk data in the image
+        run: |
+          docker run --rm --entrypoint sh osu-classifier:ci -c '
+            for f in .env ml_dataset.json downloads; do
+              if [ -e "/app/$f" ]; then
+                echo "$f was copied into the image - check .dockerignore"
+                exit 1
+              fi
+            done
+            echo "No secrets or bulk data present in /app."
+          '
