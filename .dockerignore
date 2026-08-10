@@ -1,0 +1,29 @@
+# Everything listed here is excluded from the "build context" - the snapshot of
+# this folder that Docker uploads to its daemon before running the Dockerfile.
+# Without this file, ~740 MB of data and your API keys would be sent on every
+# single build.
+
+# Secrets. Critical: image layers keep files even if a later step deletes them,
+# so anything copied in once is readable by anyone who pulls the image.
+.env
+.env.*
+
+# Training data - mounted at runtime instead of baked into the image.
+downloads/
+ml_dataset.json
+
+# Local Python environment. Never copy this in: it holds Windows binaries that
+# cannot run on the image's Linux, and the image installs its own deps anyway.
+venv/
+__pycache__/
+*.pyc
+
+# Build outputs and trained artefacts.
+*.pkl
+*.keras
+*.onnx
+
+# Repo metadata the image does not need.
+.git/
+.gitignore
+README.md
