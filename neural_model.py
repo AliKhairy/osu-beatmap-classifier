@@ -27,21 +27,71 @@ CLASSIFIER_PATH = 'beatmap_classifier.pkl'
 # in the C# app's FeatureExtractor.cs). The final map vector is FEATURE_COUNT*3 + 3.
 FEATURE_COUNT = 29
 
-# Constants for feature indices to improve readability.
-# This avoids using "magic numbers" when calculating derived scores.
-IDX_STREAM_SCORE = 0
-IDX_FINGER_CONTROL_SCORE = 1
-IDX_TAPPING_DENSITY = 2
-IDX_STREAM_PURITY_RATIO = 3
-IDX_AVG_RHYTHM_INSTABILITY = 4
-IDX_AVG_SPACING_INSTABILITY = 5
-IDX_SLIDER_DISRUPTION_RATE = 6
-IDX_FORMAL_STREAM_RATIO = 7
-IDX_MEAN_DISTANCE = 12
-IDX_STD_TIME_GAPS = 16
-IDX_SLIDER_RATIO = 18
-IDX_STD_ANGLES = 20
-IDX_PERCENTILE_DIST_95 = 14
+# --- TUNING CONSTANTS ---
+#
+# Every one of these is duplicated in FeatureExtractor.cs in the app repo, under
+# the SAME NAME (PascalCase there). The model is trained on these numbers and runs
+# on those, so a value that differs between the two silently corrupts every
+# prediction - no crash, no error. Change one side, change the other, then run the
+# parity harness and regenerate the goldens (make_goldens.py) before shipping.
+
+# Section splitting: a 2s pause reliably marks a gameplay break.
+BREAK_THRESHOLD_MS = 2000
+MIN_SECTION_LENGTH = 15
+MIN_OBJECTS_FOR_FEATURES = 5
+
+# Stream/burst detection. The distance cap stops high-BPM cross-screen jumps
+# from being counted as streams.
+STREAM_GAP_MS = 165
+STREAM_MAX_SPACING_PX = 120
+BURST_MIN_LENGTH = 3
+BURST_MAX_LENGTH = 7
+STREAM_MIN_LENGTH = 8
+
+# Buzz sliders: many repeats packed into a short pixel length.
+BUZZ_SLIDER_MIN_SLIDES = 4
+BUZZ_SLIDER_MAX_LENGTH_PX = 100
+
+# Global rhythm: ignore break-length gaps; a >15ms shift is a deliberate snap
+# change (1/2 vs 1/3 vs 1/4).
+ACTIVE_GAP_MAX_MS = 750
+RHYTHM_CHANGE_MIN_DELTA_MS = 15
+
+# A slider wedged between two fast gaps disrupts tapping.
+SLIDER_DISRUPTION_GAP_MS = 160
+
+# Hand-tuned weights for the composite finger-control score.
+FINGER_CONTROL_RHYTHM_WEIGHT = 1.2
+FINGER_CONTROL_SPACING_WEIGHT = 0.3
+FINGER_CONTROL_SLIDER_WEIGHT = 3.0
+
+# Angle buckets, in radians (pi = 180 degrees). Note these do not tile the full
+# range - angles falling between buckets are counted in none of them.
+ANGLE_SHARP_MAX = 1.04    # < ~60 deg  (snap / awkward)
+ANGLE_SQUARE_MIN = 1.3    # ~90 deg    (square jumps)
+ANGLE_SQUARE_MAX = 1.8
+ANGLE_WIDE_MIN = 2.09     # > ~120 deg (flow aim)
+ANGLE_WIDE_MAX = 2.6
+ANGLE_LINEAR_MIN = 2.7    # ~180 deg   (linear / 1-2)
+
+# Vertical jump: large Y movement with almost no X movement.
+VERTICAL_JUMP_MIN_DY_PX = 120
+VERTICAL_JUMP_MAX_DX_PX = 40
+
+# An object landing on top of where one sat two steps ago.
+PERFECT_OVERLAP_MAX_PX = 10
+
+# Collinearity over 4-object chunks.
+LINEAR_CHUNK_MIN_LENGTH_PX = 50
+LINEAR_MAX_DEVIATION_PX = 15
+
+# Map-level hybrid flags, applied to the max-pooled vector.
+PEAK_STREAM_MIN_LENGTH = 12
+PEAK_JUMP_MIN_P95_PX = 180
+
+# Indices of the aggregate features the hybrid flags read.
+IDX_MAX_CONTINUOUS_STREAM = 2
+IDX_PERCENTILE_95_DISTANCE = 16
 
 
 class ImprovedBeatmapClassifier:
@@ -101,8 +151,8 @@ class ImprovedBeatmapClassifier:
         sections, current_section = [], []
         times = [obj[2] for obj in hit_objects]
         # A 2000ms (2-second) pause is a reliable indicator of a gameplay break.
-        break_threshold = 2000
-        min_section_length = 15  # Ignore very short sections.
+        break_threshold = BREAK_THRESHOLD_MS
+        min_section_length = MIN_SECTION_LENGTH  # Ignore very short sections.
 
         for i, obj in enumerate(hit_objects):
             # Check for a long pause between the current and previous object.
@@ -128,7 +178,7 @@ class ImprovedBeatmapClassifier:
         incorporating Global Snap Variance to detect complex rhythms.
         """
         
-        if not hit_objects or len(hit_objects) < 5:
+        if not hit_objects or len(hit_objects) < MIN_OBJECTS_FOR_FEATURES:
             return np.zeros(FEATURE_COUNT)
 
         times = np.array([obj[2] for obj in hit_objects])
@@ -153,7 +203,7 @@ class ImprovedBeatmapClassifier:
         
         # Distance < 120 ensures we don't count high-BPM cross-screen jumps as "streams".
         for gap, dist in zip(time_gaps, distances):
-            if gap < 165 and dist < 120:
+            if gap < STREAM_GAP_MS and dist < STREAM_MAX_SPACING_PX:
                 current_len += 1
             else:
                 if current_len > 0:
@@ -162,17 +212,17 @@ class ImprovedBeatmapClassifier:
         if current_len > 0:
             sequence_lengths.append(current_len + 1)
 
-        burst_count = sum(1 for l in sequence_lengths if 3 <= l <= 7)
-        stream_count = sum(1 for l in sequence_lengths if l >= 8)
+        burst_count = sum(1 for l in sequence_lengths if BURST_MIN_LENGTH <= l <= BURST_MAX_LENGTH)
+        stream_count = sum(1 for l in sequence_lengths if l >= STREAM_MIN_LENGTH)
         # --- VARIABLE STREAMS (Spacing Variance) ---
         # Find the maximum spacing instability within any single stream
         rhythm_instabilities, spacing_instabilities = [], []
-        dense_indices = np.where(time_gaps < 165)[0]
+        dense_indices = np.where(time_gaps < STREAM_GAP_MS)[0]
         max_stream_spacing_variance = 0
         if len(dense_indices) > 0:
             groups = np.split(dense_indices, np.where(np.diff(dense_indices) != 1)[0] + 1)
             for group in groups:
-                if len(group) >= 8: # If it's a stream
+                if len(group) >= STREAM_MIN_LENGTH: # If it's a stream
                     stream_spacing_std = np.std(distances[group])
                     max_stream_spacing_variance = max(max_stream_spacing_variance, stream_spacing_std)
 
@@ -184,19 +234,19 @@ class ImprovedBeatmapClassifier:
                 slides = obj[6]
                 length = obj[7]
                 # High repeats + short pixel length = buzz slider
-                if slides >= 4 and length < 100: 
+                if slides >= BUZZ_SLIDER_MIN_SLIDES and length < BUZZ_SLIDER_MAX_LENGTH_PX: 
                     buzz_slider_count += 1
         max_continuous_stream = max(sequence_lengths) if sequence_lengths else 0
-        total_stream_notes = sum(l for l in sequence_lengths if l >= 8)
+        total_stream_notes = sum(l for l in sequence_lengths if l >= STREAM_MIN_LENGTH)
 
         # --- GLOBAL SNAP VARIANCE (The Finger Control/Tech Fix) ---
         # Detects when a mapper shifts between 1/2, 1/3, 1/4, and 1/6 snaps.
-        active_gaps = time_gaps[time_gaps < 750] # Focus on active gameplay, ignore breaks
+        active_gaps = time_gaps[time_gaps < ACTIVE_GAP_MAX_MS] # Focus on active gameplay, ignore breaks
         if len(active_gaps) > 1:
             # Calculate the absolute difference between consecutive gaps
             gap_diffs = np.abs(np.diff(active_gaps))
             # If the gap changes by >15ms, it's a deliberate rhythm/snap change
-            rhythm_change_ratio = np.sum(gap_diffs > 15) / len(active_gaps)
+            rhythm_change_ratio = np.sum(gap_diffs > RHYTHM_CHANGE_MIN_DELTA_MS) / len(active_gaps)
             global_rhythm_variance = np.std(active_gaps)
         else:
             rhythm_change_ratio = 0
@@ -204,7 +254,7 @@ class ImprovedBeatmapClassifier:
 
         # --- Local Instability Metrics ---
         rhythm_instabilities, spacing_instabilities = [], []
-        dense_indices = np.where(time_gaps < 165)[0]
+        dense_indices = np.where(time_gaps < STREAM_GAP_MS)[0]
         
         if len(dense_indices) > 0:
             groups = np.split(dense_indices, np.where(np.diff(dense_indices) != 1)[0] + 1)
@@ -215,8 +265,10 @@ class ImprovedBeatmapClassifier:
 
         avg_rhythm_instability = np.mean(rhythm_instabilities) if rhythm_instabilities else 0
         avg_spacing_instability = np.mean(spacing_instabilities) if spacing_instabilities else 0
-        slider_disruption_rate = np.sum(is_slider[1:-1] & (time_gaps[:-1] < 160) & (time_gaps[1:] < 160)) / num_objects
-        finger_control_score = (avg_rhythm_instability * 1.2) + (avg_spacing_instability * 0.3) + (slider_disruption_rate * 3.0)
+        slider_disruption_rate = np.sum(is_slider[1:-1] & (time_gaps[:-1] < SLIDER_DISRUPTION_GAP_MS) & (time_gaps[1:] < SLIDER_DISRUPTION_GAP_MS)) / num_objects
+        finger_control_score = ((avg_rhythm_instability * FINGER_CONTROL_RHYTHM_WEIGHT)
+                                + (avg_spacing_instability * FINGER_CONTROL_SPACING_WEIGHT)
+                                + (slider_disruption_rate * FINGER_CONTROL_SLIDER_WEIGHT))
 
         # --- MICRO-PATTERNS & GEOMETRY ---
         slider_ratio = np.sum(is_slider) / num_objects
@@ -236,21 +288,21 @@ class ImprovedBeatmapClassifier:
                 angles = np.arccos(cos_angles)
                 
                 # Categorize the angles
-                sharp_angles = np.sum(angles < 1.04)   # < 60 degrees (Snap Aim / Awkward)
-                square_angles = np.sum((angles > 1.3) & (angles < 1.8)) # ~90 degrees (Square Jumps)
-                wide_angles = np.sum((angles > 2.09) & (angles < 2.6))  # > 120 degrees (Flow Aim)
-                linear_angles = np.sum(angles > 2.7)   # ~180 degrees (Linear Aim / 1-2 Jumps)
+                sharp_angles = np.sum(angles < ANGLE_SHARP_MAX)   # < 60 degrees (Snap Aim / Awkward)
+                square_angles = np.sum((angles > ANGLE_SQUARE_MIN) & (angles < ANGLE_SQUARE_MAX)) # ~90 degrees (Square Jumps)
+                wide_angles = np.sum((angles > ANGLE_WIDE_MIN) & (angles < ANGLE_WIDE_MAX))  # > 120 degrees (Flow Aim)
+                linear_angles = np.sum(angles > ANGLE_LINEAR_MIN)   # ~180 degrees (Linear Aim / 1-2 Jumps)
 
         # Vertical Jumps: Large Y movement, tiny X movement
         dx = np.abs(np.diff(positions[:, 0]))
         dy = np.abs(np.diff(positions[:, 1]))
-        vertical_jumps = np.sum((dy > 120) & (dx < 40))
+        vertical_jumps = np.sum((dy > VERTICAL_JUMP_MIN_DY_PX) & (dx < VERTICAL_JUMP_MAX_DX_PX))
 
         # Perfect Overlaps: Object is placed exactly where an object was 2 steps ago
         perfect_overlaps = 0
         if num_objects > 2:
             dist_2_steps_back = np.linalg.norm(positions[2:] - positions[:-2], axis=1)
-            perfect_overlaps = np.sum(dist_2_steps_back < 10) # Less than 10 pixels away
+            perfect_overlaps = np.sum(dist_2_steps_back < PERFECT_OVERLAP_MAX_PX) # Less than 10 pixels away
 
         # --- TRUE LINEAR PATTERN DETECTION (Collinearity) ---
         # Look at chunks of 4 consecutive hit objects.
@@ -275,7 +327,7 @@ class ImprovedBeatmapClassifier:
                 line_vec = end_pt - start_pt
                 line_len = np.linalg.norm(line_vec)
                 
-                if line_len > 50: # The sequence must actually cover some distance
+                if line_len > LINEAR_CHUNK_MIN_LENGTH_PX: # The sequence must actually cover some distance
                     # Normalize the line vector
                     line_dir = line_vec / line_len
                     # Normal vector (perpendicular to the line)
@@ -286,7 +338,7 @@ class ImprovedBeatmapClassifier:
                     dev2 = np.abs(np.dot(chunk[2] - start_pt, normal_vec))
                     
                     # If both middle points are very close to the line (less than 15 pixels off), it's linear.
-                    if dev1 < 15 and dev2 < 15:
+                    if dev1 < LINEAR_MAX_DEVIATION_PX and dev2 < LINEAR_MAX_DEVIATION_PX:
                         true_linear_sequences += 1
 
         # --- THE FINAL FEATURE VECTOR (Exactly 29 Features) ---
@@ -365,11 +417,11 @@ class ImprovedBeatmapClassifier:
         features_np = np.array(section_features_list)
 
         # --- Hybrid Flags ---
-        # IDX 2 is 'max_continuous_stream'
-        has_peak_stream_section = 1 if np.max(features_np[:, 2]) >= 12 else 0
-        
-        # IDX 16 is 'percentile_dist_95' (large jumps)
-        has_peak_jump_section = 1 if np.max(features_np[:, 16]) > 180 else 0
+        has_peak_stream_section = 1 if np.max(
+            features_np[:, IDX_MAX_CONTINUOUS_STREAM]) >= PEAK_STREAM_MIN_LENGTH else 0
+
+        has_peak_jump_section = 1 if np.max(
+            features_np[:, IDX_PERCENTILE_95_DISTANCE]) > PEAK_JUMP_MIN_P95_PX else 0
         
         # Explicit Hybrid Override
         is_stream_jump_hybrid = 1 if has_peak_stream_section and has_peak_jump_section else 0
