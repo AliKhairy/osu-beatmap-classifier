@@ -242,38 +242,226 @@ and `--root-dir <temp copy of the root artifacts>`. The real registry and the
 shipped models were not written to — proved by checksum in section 6.
 
 ```
-################ (d) EMPTY REGISTRY -> first model promotes ################
-Candidate: macro_f1=0.3551 ...
-PROMOTE: no champion registered, promoting candidate (macro F1 0.3551) as the first one
-EXIT CODE: 0
+SETUP: throwaway DB .tmp_mlflow2.db; temp root seeded with 7 files
 
-################ (b) CANDIDATE vs CHAMPION -> promotes ################
-Candidate: macro_f1=0.3504 ...
-Champion: registered version 2 (run c7f9c287), stored macro_f1=0.3550680494867983
-Champion re-scored on this split: macro_f1=0.3551 ...
-PROMOTE: macro F1 0.3504 is within tolerance of the champion 0.3551 (delta -0.0047, tolerance 0.0080)
-EXIT CODE: 0
+################ (d) EMPTY REGISTRY -> first model promotes unconditionally ################
+No champion registered yet.
+PROMOTE: no champion registered, promoting candidate (macro F1 0.3475) as the first one
+Registered version 1 and moved the 'champion' alias to it (run ea565c72b56b4d8a...)
+EXIT CODE: 0   (expect: 0)
 
-################ (c) 1-EPOCH CANDIDATE -> REJECTED ################
-Candidate: macro_f1=0.1745 micro_f1=0.4140 ...
-Champion re-scored on this split: macro_f1=0.3504 ...
-REJECT: macro F1 0.1745 is worse than the champion 0.3504 by more than the tolerance 0.0080 (floor 0.3424)
-EXIT CODE: 2
-(c) temp root UNCHANGED after rejection - rejected candidate did not overwrite anything
+################ (b) BETTER CANDIDATE vs CHAMPION -> promotes ################
+PROMOTE: macro F1 0.3551 is better than the champion 0.3475 (delta +0.0075, tolerance 0.0080)
+Registered version 2 and moved the 'champion' alias to it (run f8ca07bbc169456a...)
+EXIT CODE: 0   (expect: 0)
+
+################ (c) 1-EPOCH CANDIDATE -> REJECTED, non-zero exit ################
+REJECT: macro F1 0.1745 is worse than the champion 0.3551 by more than the tolerance 0.0080 (floor 0.3471)
+EXIT CODE: 2   (expect: non-zero)
+(c) temp root UNCHANGED after rejection (sha256 1265f7efd0d58fb6) - nothing was overwritten
+
+################ final registry state (throwaway DB) ################
+champion version  : 2
+champion macro_f1 : 0.355068
+best_ever macro_f1: 0.355068
 ```
 
 **Result: pass.** The weak candidate (`--epochs 1`, macro F1 0.1745 vs the
-champion's 0.3504) is rejected with a non-zero exit, and nothing is copied.
+champion's 0.3551) is rejected with a non-zero exit, and nothing is copied.
 
-Note the `Champion re-scored on this split` line: the gate does not trust the
-champion's stored metric, it re-runs it through the same scoring path as the
-candidate. In (b) the stored 0.35507 and the re-scored 0.3551 agree, which is
-what you want to see — but if the dataset had moved, they would not, and the
+The gate also re-scores the champion rather than trusting its stored metric —
+in a separate run the stored 0.3550680 and the re-scored 0.3551 agreed, which
+is what you want to see. If the dataset had moved they would not, and the
 comparison would have been against a number describing a different test set.
+
+An earlier version of this verification ran each command twice (once to capture
+output, once to capture the exit code), which advanced the registry two versions
+per scenario and compared a candidate against its own prior promotion. The exit
+codes were valid but the sequence was misleading, so it was rewritten to the
+single-pass form shown above. Both runs agreed on every verdict.
 
 ---
 
-## 6. The shipped models were never touched
+## 6. The Prefect flow, both outcomes
+
+Both runs used `--root-dir <temp>` and the throwaway tracking DB, because a
+successful flow run ends in a promotion and that must not replace the shipped
+models.
+
+### Run 1 — candidate passes, ONNX exported
+
+```
+$ python cli.py pipeline --epochs 100 --train-seed 7 \
+      --candidate-dir candidates/flow-good --root-dir <temp>
+...
+Exported 5 ONNX models + model_config.json to <temp>
+RUN 1 exit code: 0   (expect 0)
+    onnx count: 5  (expect 5)
+```
+
+All six files the app loads were produced:
+
+```
+    101350  ensemble_model_1.onnx
+    101494  ensemble_model_2.onnx
+    101494  ensemble_model_3.onnx
+    101518  ensemble_model_4.onnx
+    101531  ensemble_model_5.onnx
+      6875  model_config.json
+```
+
+And the config matches the models beside it, which is the reason the two steps
+were merged:
+
+```
+config scaler_mean matches the scaler beside it : True
+config scaler_scale matches                      : True
+config tags match the binarizer                  : True
+lengths: mean=90 scale=90 tags=66
+identical to the currently shipped model_config.json: False   <- correct, different training run
+```
+
+### Run 2 — gate blocks, nothing is exported
+
+```
+$ python cli.py pipeline --epochs 1 --train-seed 8 \
+      --candidate-dir candidates/flow-blocked --root-dir <temp>
+
+Champion re-scored on this split: macro_f1=0.3626 ...
+REJECT: macro F1 0.1873 is worse than the champion 0.3626 by more than the tolerance 0.0080 (floor 0.3546)
+RuntimeError: Promotion gate rejected the candidate (exit 2). Export is skipped:
+  the models currently in <temp> stay in place.
+Flow run 'imperious-bison' - Finished in state Failed(...)
+
+RUN 2 exit code: 1   (expect NON-ZERO)
+RUN 2 onnx files in temp root: 0  (expect 0 - gate blocked export)
+```
+
+**Result: pass.** The block is structural, not conventional: `export_task`
+takes its input from `promote_task`, and `promote_task` raises on rejection, so
+a rejected candidate cannot reach export even if someone forgets to check.
+
+---
+
+## 7. Drift report
+
+```
+$ python cli.py drift --maps songs --out drift_report.html
+
+Extracted features from 31 map(s) in songs
+Drifted columns: 88 of 90  (share 0.978, per-column threshold from Evidently's default preset)
+Most drifted features:
+  mean_max_stream_spacing_variance   0.919
+  max_max_stream_spacing_variance    0.825
+  max_global_rhythm_variance         0.717
+  max_mean_time_gap                  0.704
+  mean_avg_spacing_instability       0.689
+  mean_mean_time_gap                 0.667
+  mean_num_objects                   0.650
+  mean_global_rhythm_variance        0.645
+Report: drift_report.html    (7.8 MB)
+Logged MLflow run: 5ad25fedc4f84f19a3856eabd5b18141
+```
+
+**Read this number carefully — 88/90 is not evidence the model is broken.**
+It compares 31 hand-picked maps in `songs/` (mostly Extra/Expert difficulties,
+chosen as prediction test cases) against 4643 training maps. A tiny, deliberately
+unrepresentative current sample against a large reference will show widespread
+distributional difference by construction. The useful signal is *which* features
+move and whether that set is stable across folders — here it is dominated by
+stream-spacing variance and rhythm-variance features, which is consistent with
+`songs/` being a harder, more stream-heavy selection than the training corpus.
+
+### A bug this found in my own first implementation
+
+The first version reported `Drifted columns: None of 90 (share 0.5)`. The 0.5
+was not a measurement — a generic recursive search for a key named
+`drift_share` had found `config.drift_share`, the **threshold** Evidently was
+configured with, and reported it as the result. The fix targets the
+`DriftedColumnsCount` metric by its config type and reads only its `value`
+block. Recorded here because a monitoring tool quietly reporting a plausible
+wrong number is the exact failure this phase is supposed to prevent.
+
+---
+
+## 8. Tests and lint
+
+```
+$ python -m pytest tests/ -q
+.....................................                                    [100%]
+37 passed
+
+$ python -m ruff check .
+All checks passed!
+```
+
+`tests/test_gate.py` (16 tests) covers `promote.decide` — better, worse within
+tolerance, worse beyond tolerance, the inclusive boundary at exactly
+`champion - tolerance`, no champion, zero tolerance, a negative tolerance being
+rejected, a missing tolerance refusing to guess, and the ratchet case: a
+candidate that beats the incumbent but sits below `best_ever - tolerance` must
+be rejected.
+
+`tests/test_features.py` (21 tests) covers the extractor, including a
+**golden-vector regression**: `tests/golden_feature_vector.json` pins the exact
+90 floats produced for a committed map (`Polyphia - Playing God (Mir)
+[Nirvana].osu`, 918 hit objects, 2 sections), compared at `rtol=atol=1e-9`.
+
+That test paid for itself immediately. Ruff found two dead variables
+(`x_spread` / `y_spread`) in the collinearity loop of
+`neural_model.extract_meaningful_features` — computed for every 4-object chunk
+of every section and never read. They were removed, and the golden test
+confirmed all 90 floats were unchanged. That is the difference between
+believing a change was safe and verifying it.
+
+**If that test ever fails, the fix is not to regenerate the golden.** It means
+the feature math moved, which is only correct if `FeatureExtractor.cs` moved
+identically and both sets of goldens were regenerated together.
+
+### The pipeline runs on the committed sample dataset
+
+`ml_dataset.json` is ~528 MB and not in the repo, so `samples/sample_features.csv`
+(60 already-extracted feature vectors + tags, all 66 labels covered, drawn only
+from training rows — zero overlap with the holdout) exists so a reader can run
+the pipeline on a fresh checkout:
+
+```
+$ python cli.py train-ensemble --dataset samples/sample_features.csv \
+      --out-dir candidates/sample-run --epochs 5 --train-seed 1
+[split] Extracting features from samples/sample_features.csv (no cache for 6703bab512d6c9b0)...
+Training seed: 1 (evaluation split seed stays 42)
+Model 1 saved as candidates/sample-run\ensemble_model_1.keras.
+... (5 models)
+             micro avg       0.10      1.00      0.19        83
+             macro avg       0.10      0.62      0.18        83
+Artifacts written to: candidates/sample-run
+```
+
+**The machinery runs; the model is meaningless.** 60 maps across 66 labels
+produces the numbers above, and they should not be read as a result. The file
+contains derived statistics and tag labels only — no beatmap content.
+
+### The exit-code contract still holds
+
+Every new subcommand follows the existing rule: 0 on success, non-zero on
+failure, so `a && b` chains and CI can rely on it.
+
+```
+$ python cli.py promote --candidate /nonexistent      -> exit 1
+$ python cli.py drift --maps /nonexistent             -> exit 1
+$ python cli.py evaluate --holdout --dataset /nope.json -> exit 1
+$ python cli.py definitely-not-a-verb                 -> exit 2
+$ python cli.py export-onnx --model-dir /nonexistent  -> exit 1
+```
+
+All 10 subcommands (`build-dataset rebuild train train-ensemble export-onnx
+predict evaluate promote drift pipeline`) respond to `--help` without importing
+TensorFlow, mlflow, prefect or evidently — the lazy-import discipline the
+original CLI established.
+
+---
+
+## 9. The shipped models were never touched
 
 Checksums captured **before** any training ran, and re-checked after the
 calibration, the champion registration and every gate scenario:
@@ -323,6 +511,22 @@ in place deliberately.
 3. **`songs/` contains 31 committed `.osu` files.** These predate this work. No
    further beatmap content was added — `samples/sample_features.csv` holds
    derived statistics and tag labels only.
+
+---
+
+## Not verified
+
+One thing in this branch was **not** verified locally, stated here rather than
+implied to work:
+
+- **The Docker image build.** The Dockerfile now installs `requirements.txt`
+  and `requirements-mlops.txt` as two separate layers. Docker Desktop's daemon
+  was not running on this machine (`failed to connect to the docker API at
+  npipe:////./pipe/dockerDesktopLinuxEngine`), so the image was never built
+  here. What *was* checked is only static: both `COPY` sources exist and the
+  ignore rules are in place. CI builds the image on every push and runs the
+  `--help`, failure-exit and image-contents checks against it, so this is
+  covered there — but it has not been run locally.
 
 ---
 

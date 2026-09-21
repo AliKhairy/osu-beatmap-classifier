@@ -376,10 +376,18 @@ def cmd_drift(args):
     summary, path = build_report(prepared.X, current_X, out_path=args.out)
 
     if not summary.get('drift_summary_parsed'):
-        print("Report written, but the drift share could not be read out of "
-              "Evidently's result - reporting it as unknown rather than zero.")
-    print(f"\nDrifted columns: {summary.get('drifted_columns')} of {summary['n_features']}"
-          f"  (share {summary.get('drift_share')})")
+        print("Report written, but the drift counts could not be read out of "
+              "Evidently's result - reporting them as unknown rather than "
+              "guessing a number.")
+    else:
+        share = summary['drift_share']
+        print(f"\nDrifted columns: {summary['drifted_columns']} of "
+              f"{summary['n_features']}  (share {share:.3f}, per-column "
+              f"threshold from Evidently's default preset)")
+        if summary.get('top_drifted'):
+            print("Most drifted features:")
+            for name, score in summary['top_drifted']:
+                print(f"  {name:<34} {score:.3f}")
     print(f"Report: {os.path.abspath(path)}")
 
     if not args.no_log:

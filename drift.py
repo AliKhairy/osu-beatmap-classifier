@@ -108,41 +108,73 @@ def build_report(reference_X, current_X, out_path=REPORT_NAME):
     return summary, out_path
 
 
-def _extract_drift_summary(result):
-    """
-    Pull the drift share out of Evidently's result.
+DRIFTED_COUNT_TYPE = 'evidently:metric_v2:DriftedColumnsCount'
+VALUE_DRIFT_TYPE = 'evidently:metric_v2:ValueDrift'
 
-    Written defensively on purpose: the shape of this dict is Evidently's
-    internal format and has changed between releases. If the expected keys are
-    missing we say so rather than reporting a confident zero, which would be the
-    worst possible failure mode for a monitoring tool.
+
+def _extract_drift_summary(result, top_n=8):
     """
-    out = {'drifted_columns': None, 'drift_share': None, 'drift_summary_parsed': False}
+    Pull the drift counts out of Evidently's result.
+
+    Targets the DriftedColumnsCount metric by its config type and reads only its
+    `value` block. That specificity is deliberate and was learned the hard way: a
+    generic recursive search for a key named "drift_share" finds
+    `config.drift_share`, which is the THRESHOLD Evidently was configured with
+    (0.5), not the measured share. The first version of this function did
+    exactly that and cheerfully reported 0.5 for a dataset where 88 of 90
+    columns had drifted.
+
+    Structure being parsed (evidently 0.7.23):
+        {"metrics": [
+            {"config": {"type": "...DriftedColumnsCount", "drift_share": 0.5},
+             "value": {"count": 88.0, "share": 0.978}},        <- the measurement
+            {"config": {"type": "...ValueDrift", "column": "max_burst_count",
+                        "threshold": 0.1},
+             "value": 0.529},                                   <- per column
+            ...]}
+
+    If the expected shape is absent, every field stays None and
+    drift_summary_parsed is False. A monitoring tool that reports a confident
+    wrong number is worse than one that admits it could not read the result.
+    """
+    out = {'drifted_columns': None, 'drift_share': None,
+           'drift_threshold': None, 'top_drifted': None,
+           'drift_summary_parsed': False}
     try:
         payload = result.dict()
     except Exception:
         return out
 
-    def walk(node):
-        if isinstance(node, dict):
-            for key, value in node.items():
-                lowered = str(key).lower()
-                if lowered in ('number_of_drifted_columns', 'drifted_columns_count') \
-                        and isinstance(value, (int, float)):
-                    out['drifted_columns'] = int(value)
-                    out['drift_summary_parsed'] = True
-                if lowered in ('share_of_drifted_columns', 'drift_share') \
-                        and isinstance(value, (int, float)):
-                    out['drift_share'] = float(value)
-                    out['drift_summary_parsed'] = True
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
+    metrics = payload.get('metrics')
+    if not isinstance(metrics, list):
+        return out
 
-    walk(payload)
+    per_column = []
+    for entry in metrics:
+        if not isinstance(entry, dict):
+            continue
+        config = entry.get('config') or {}
+        etype = config.get('type')
+        value = entry.get('value')
 
-    if out['drift_share'] is None and out['drifted_columns'] is not None:
-        from neural_model import FEATURE_NAMES
-        out['drift_share'] = out['drifted_columns'] / float(len(FEATURE_NAMES))
+        if etype == DRIFTED_COUNT_TYPE and isinstance(value, dict):
+            count, share = value.get('count'), value.get('share')
+            if isinstance(count, (int, float)):
+                out['drifted_columns'] = int(count)
+            if isinstance(share, (int, float)):
+                out['drift_share'] = float(share)
+            # Recorded separately so it can never be mistaken for the result.
+            if isinstance(config.get('drift_share'), (int, float)):
+                out['drift_threshold'] = float(config['drift_share'])
+            out['drift_summary_parsed'] = out['drifted_columns'] is not None
+
+        elif etype == VALUE_DRIFT_TYPE and isinstance(value, (int, float)):
+            column = config.get('column')
+            if column:
+                per_column.append((str(column), float(value)))
+
+    if per_column:
+        per_column.sort(key=lambda kv: kv[1], reverse=True)
+        out['top_drifted'] = per_column[:top_n]
+
     return out
