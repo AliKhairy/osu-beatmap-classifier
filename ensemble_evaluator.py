@@ -40,7 +40,7 @@ def train_and_evaluate_ensemble(num_models=5, dataset='ml_dataset.json', epochs=
     Returns a dict describing the run so callers (the Prefect flow, the gate)
     can use the numbers instead of scraping stdout.
     """
-    import split as split_mod
+    from mlops import split as split_mod
 
     print(f"--- Starting {num_models}-Model Ensemble Training ---")
 

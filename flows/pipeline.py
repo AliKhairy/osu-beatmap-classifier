@@ -54,10 +54,10 @@ def train_task(dataset, models, epochs, train_seed, candidate_dir):
 
 @task(name='evaluate-holdout')
 def evaluate_task(candidate_dir, dataset, threshold):
-    import split as split_mod
-    from metrics_report import format_summary
-    from scoring import score_on_holdout
-    from tracking import log_evaluation
+    from mlops import split as split_mod
+    from mlops.metrics_report import format_summary
+    from mlops.scoring import score_on_holdout
+    from mlops.tracking import log_evaluation
 
     logger = get_run_logger()
     prepared = split_mod.prepare_dataset(dataset)

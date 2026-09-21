@@ -78,7 +78,7 @@ def score_on_holdout(model_dir, prepared, split, threshold=THRESHOLD, num_models
     different tag for each model. Failing loudly here is the whole reason the
     gate can be trusted.
     """
-    from metrics_report import evaluate_probabilities
+    from mlops.metrics_report import evaluate_probabilities
 
     models, scaler, binarizer = load_ensemble(model_dir, num_models)
 

@@ -57,9 +57,9 @@ the exported ONNX keeps the required 90-in / 66-out shape at opset 15.
 Claim: two runs produce the same split.
 
 ```
-$ python split.py                      # run 1, cold (no feature cache)
-$ python split.py                      # run 2, warm cache
-$ python split.py --no-cache           # run 3, full re-extraction from raw JSON
+$ python -m mlops.split                 # run 1, cold (no feature cache)
+$ python -m mlops.split                 # run 2, warm cache
+$ python -m mlops.split --no-cache      # run 3, full re-extraction from raw JSON
 ```
 
 All three produced a byte-identical manifest:
@@ -120,7 +120,7 @@ Logged MLflow run: 83fc1a2adb2741f590a3e3c41e21f9aa
 Read back out of the tracking store (`sqlite:///mlflow.db`), not just printed:
 
 ```
-$ python -c "from tracking import describe_run; ..."
+$ python -c "from mlops.tracking import describe_run; ..."
 status : FINISHED
 
 PARAMS:
@@ -186,7 +186,7 @@ same distribution:
 ```
 
 **Tolerance = 0.008**, the max pairwise gap rounded up. Set in
-`promote.py:DEFAULT_TOLERANCE`.
+`mlops/promote.py:DEFAULT_TOLERANCE`.
 
 This is the part worth keeping: a plausible-looking **0.005 was tried first and
 is wrong**. Checked against the measured runs, it would have rejected two of the
@@ -512,7 +512,7 @@ work; the first two are pre-existing properties of the pipeline that were left
 in place deliberately.
 
 1. **The scaler is fit on all 4643 rows before splitting**
-   (`ensemble_evaluator.py`, preserved in `split.py:scale_all`). The holdout's
+   (`ensemble_evaluator.py`, preserved in `mlops/split.py:scale_all`). The holdout's
    feature distribution therefore leaks into standardisation, making every
    absolute score mildly optimistic. Fixing it would change `scaler_mean` /
    `scaler_scale`, hence `model_config.json`, hence C# parity — explicitly out

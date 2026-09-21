@@ -9,7 +9,7 @@ repo and they run on every CI push.
 """
 import pytest
 
-from promote import Verdict, decide, summarise_spread
+from mlops.promote import Verdict, decide, summarise_spread
 
 TOL = 0.01
 
@@ -95,7 +95,7 @@ def test_missing_tolerance_refuses_to_guess(monkeypatch):
     A gate that silently defaults to something plausible is worse than no gate,
     because it looks like it is protecting you.
     """
-    import promote
+    from mlops import promote
 
     monkeypatch.setattr(promote, 'DEFAULT_TOLERANCE', None)
     with pytest.raises(ValueError, match='refuses to guess'):

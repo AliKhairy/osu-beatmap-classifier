@@ -21,7 +21,7 @@ import os
 import shutil
 import tempfile
 
-from tracking import CHAMPION_ALIAS, REGISTERED_MODEL_NAME, setup, tracking_uri
+from mlops.tracking import CHAMPION_ALIAS, REGISTERED_MODEL_NAME, setup, tracking_uri
 
 ENSEMBLE_ARTIFACT_PATH = 'ensemble'
 PYFUNC_ARTIFACT_PATH = 'model'
@@ -74,7 +74,7 @@ def _pyfunc_class():
 
 
 def _artifact_map(model_dir, num_models):
-    from scoring import BINARIZER_NAME, MODEL_GLOB, SCALER_NAME
+    from mlops.scoring import BINARIZER_NAME, MODEL_GLOB, SCALER_NAME
 
     artifacts = {
         'scaler': os.path.join(model_dir, SCALER_NAME),
@@ -92,7 +92,7 @@ def register_ensemble(model_dir, summary, per_tag, params=None, tags=None,
 
     Returns (run_id, version) - version is None when register=False.
     """
-    from scoring import count_models
+    from mlops.scoring import count_models
 
     # setup() returns the configured mlflow module - taking it from there rather
     # than importing separately guarantees the tracking URI and experiment are

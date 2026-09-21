@@ -144,7 +144,7 @@ recorded, and a model only reaches the app if it survives a gate.
 ```mermaid
 flowchart TD
     A[".osu files<br/>downloads/"] -->|build-dataset<br/><i>optional, needs network</i>| B["ml_dataset.json"]
-    B --> C["split.py<br/>seed 42, 80/20"]
+    B --> C["mlops/split.py<br/>seed 42, 80/20"]
     C --> D["split_manifest.json<br/><i>929 holdout beatmap ids + hash</i>"]
     C -->|train rows| E["train-ensemble<br/>5 Keras models"]
     E --> F["candidates/&lt;run&gt;/<br/><i>never the repo root</i>"]
@@ -166,6 +166,29 @@ flowchart TD
     style M fill:#2f6f4f,stroke:#1b4030,color:#fff
     style I fill:#3a5a8c,stroke:#22375a,color:#fff
 ```
+
+### Where the code lives
+
+```
+mlops/           split.py        the frozen evaluation split, and data prep
+                 scoring.py      loading an ensemble and scoring it
+                 metrics_report.py  micro/macro/per-tag F1
+                 tracking.py     MLflow wiring
+                 registry.py     the ensemble as one registered pyfunc model
+                 promote.py      the gate decision (pure, unit-tested)
+                 drift.py        Evidently batch drift
+flows/           pipeline.py     the Prefect flow
+tests/           test_features.py  extractor + golden-vector regression
+                 test_gate.py      the gate
+samples/         sample_features.csv
+```
+
+`neural_model.py`, `cli.py`, `osu_parser.py`, `parity_dump.py` and
+`make_goldens.py` stay at the repo root on purpose. `beatmap_classifier.pkl`
+pickles an `ImprovedBeatmapClassifier` *instance*, and pickle records the module
+path — moving `neural_model.py` would make that file unloadable at runtime. The
+Dockerfile entrypoint is `cli.py`, and the parity scripts are invoked by the app
+repo's harness.
 
 ### What the gate does
 
@@ -216,7 +239,7 @@ rest: **0 on success, non-zero on failure.**
 
 ```bash
 # Record the fixed evaluation split (writes split_manifest.json)
-python split.py
+python -m mlops.split
 
 # Train a candidate WITHOUT touching the models in the repo root
 python cli.py train-ensemble --out-dir candidates/my-run --train-seed 1

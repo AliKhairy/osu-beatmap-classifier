@@ -194,9 +194,9 @@ def cmd_evaluate(args):
 
 def _evaluate_holdout(args):
     """Score a model directory on the fixed split and log the run to MLflow."""
-    import split as split_mod
-    from metrics_report import format_summary
-    from scoring import count_models, score_on_holdout
+    from mlops import split as split_mod
+    from mlops.metrics_report import format_summary
+    from mlops.scoring import count_models, score_on_holdout
 
     if not os.path.exists(args.dataset):
         print(f"Dataset not found: {args.dataset}.")
@@ -224,7 +224,7 @@ def _evaluate_holdout(args):
     if args.no_log:
         return 0
 
-    from tracking import log_evaluation
+    from mlops.tracking import log_evaluation
 
     run_id = log_evaluation(
         summary, per_tag,
@@ -251,11 +251,11 @@ def cmd_promote(args):
     """Compare a candidate against the champion and promote only if it holds up."""
     import shutil
 
-    import promote as gate
-    import registry
-    import split as split_mod
-    from metrics_report import format_summary
-    from scoring import count_models, score_on_holdout
+    from mlops import promote as gate
+    from mlops import registry
+    from mlops import split as split_mod
+    from mlops.metrics_report import format_summary
+    from mlops.scoring import count_models, score_on_holdout
 
     if count_models(args.candidate) == 0:
         print(f"No candidate models found in: {args.candidate}")
@@ -358,8 +358,8 @@ def cmd_promote(args):
 
 def cmd_drift(args):
     """Compare a folder of new maps against the training feature distribution."""
-    import split as split_mod
-    from drift import build_report, features_from_folder
+    from mlops import split as split_mod
+    from mlops.drift import build_report, features_from_folder
 
     if not os.path.isdir(args.maps):
         print(f"Maps folder not found: {args.maps}")
@@ -398,7 +398,7 @@ def cmd_drift(args):
     print(f"Report: {os.path.abspath(path)}")
 
     if not args.no_log:
-        from tracking import log_evaluation
+        from mlops.tracking import log_evaluation
         metrics = {k: v for k, v in summary.items() if isinstance(v, (int, float))}
         run_id = log_evaluation(
             metrics, None,
