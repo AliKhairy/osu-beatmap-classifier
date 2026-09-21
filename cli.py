@@ -331,7 +331,7 @@ def cmd_promote(args):
         return 1
 
     registry.set_champion(version)
-    print(f"Registered version {version} and moved the '{'champion'}' alias to it "
+    print(f"Registered version {version} and moved the 'champion' alias to it "
           f"(run {run_id}).")
 
     # Copy artifacts to --root-dir. Defaults to the repo root, which is where

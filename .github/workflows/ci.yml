@@ -58,7 +58,11 @@ jobs:
 
       - name: Every subcommand is wired up
         run: |
-          for verb in build-dataset rebuild train train-ensemble export-onnx predict evaluate; do
+          # Also proves the lazy-import discipline holds: promote, drift and
+          # pipeline import mlflow/evidently/prefect inside their functions, so
+          # --help must not pay for (or require) those imports.
+          for verb in build-dataset rebuild train train-ensemble export-onnx \
+                      predict evaluate promote drift pipeline; do
             echo "::group::$verb --help"
             docker run --rm osu-classifier:ci "$verb" --help
             echo "::endgroup::"
@@ -88,17 +92,67 @@ jobs:
             exit 1
           fi
 
+      # The gate is the one component whose failure is silent: a promote that
+      # exits 0 when it should have refused looks exactly like a healthy
+      # pipeline, and would let a regression straight through to export-onnx.
+      # So its refusal path is asserted the same way as the others.
+      - name: The promotion gate refuses to run on nothing
+        run: |
+          if docker run --rm osu-classifier:ci promote --candidate /nonexistent; then
+            echo "Expected 'promote' to fail with no candidate present, got exit 0"
+            exit 1
+          fi
+          if docker run --rm osu-classifier:ci drift --maps /nonexistent; then
+            echo "Expected 'drift' to fail with a missing maps folder, got exit 0"
+            exit 1
+          fi
+          if docker run --rm osu-classifier:ci evaluate --holdout; then
+            echo "Expected 'evaluate --holdout' to fail with no dataset, got exit 0"
+            exit 1
+          fi
+
       # A guard against the .dockerignore silently breaking. If .env or the
       # dataset ever get baked into a layer, the secret is permanently readable
       # by anyone who pulls the image, so this is checked rather than trusted.
       - name: No secrets or bulk data in the image
         run: |
+          # mlruns/ and mlflow.db are in this list for the same reason as .env:
+          # they accumulate local experiment history and artifacts, and baking
+          # them into a layer publishes them to anyone who pulls the image.
           docker run --rm --entrypoint sh osu-classifier:ci -c '
-            for f in .env ml_dataset.json downloads; do
+            for f in .env ml_dataset.json downloads mlruns mlflow.db candidates .cache; do
               if [ -e "/app/$f" ]; then
                 echo "$f was copied into the image - check .dockerignore"
                 exit 1
               fi
             done
-            echo "No secrets or bulk data present in /app."
+            echo "No secrets, bulk data or local MLflow state present in /app."
           '
+
+  lint-and-test:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # The feature tests import neural_model, which imports tensorflow at
+      # module level, so the full training requirements are needed here. That
+      # costs a couple of minutes on a cold cache. The alternative - splitting
+      # the feature math out of the TF-importing module - would mean refactoring
+      # the one file whose line-for-line correspondence with the C# extractor is
+      # the thing these tests exist to protect. Not worth it.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Unit tests
+        run: pytest -q
