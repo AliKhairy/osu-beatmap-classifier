@@ -454,6 +454,23 @@ $ python cli.py definitely-not-a-verb                 -> exit 2
 $ python cli.py export-onnx --model-dir /nonexistent  -> exit 1
 ```
 
+One pre-existing hole in that contract was closed. `cmd_rebuild` returned 0 no
+matter what happened inside `rebuild()` — missing token, absent `downloads/`,
+nothing matched — so a scripted `cli.py rebuild && cli.py train-ensemble` would
+proceed to train on whatever stale dataset was lying around:
+
+```
+$ mv .env .env.bak && python cli.py rebuild
+Error: ECHO_API_TOKEN not found. Please create a .env file.
+Rebuild did not produce a dataset.
+exit 1                                    # was 0 before this change
+```
+
+`rebuild()` also now writes through `dataset_builder.save_dataset`, which writes
+atomically and refuses to overwrite a good dataset with an empty one. It
+previously used a plain `json.dump`, so a crash mid-write destroyed a file that
+costs hours of scraping, and a run matching nothing silently truncated it to `[]`.
+
 All 10 subcommands (`build-dataset rebuild train train-ensemble export-onnx
 predict evaluate promote drift pipeline`) respond to `--help` without importing
 TensorFlow, mlflow, prefect or evidently — the lazy-import discipline the

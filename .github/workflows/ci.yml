@@ -110,6 +110,14 @@ jobs:
             echo "Expected 'evaluate --holdout' to fail with no dataset, got exit 0"
             exit 1
           fi
+          # rebuild returned 0 unconditionally until recently, even with no
+          # token and no downloads/ - so `rebuild && train-ensemble` would
+          # happily train on a stale dataset. The image has neither, so this
+          # must now fail.
+          if docker run --rm osu-classifier:ci rebuild; then
+            echo "Expected 'rebuild' to fail with no token and no downloads/, got exit 0"
+            exit 1
+          fi
 
       # A guard against the .dockerignore silently breaking. If .env or the
       # dataset ever get baked into a layer, the secret is permanently readable

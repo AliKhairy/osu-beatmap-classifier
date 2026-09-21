@@ -56,7 +56,14 @@ def cmd_rebuild(args):
     """Re-parse the already-downloaded .osu files in downloads/ into a dataset."""
     from rebuild_from_downloaded import rebuild
 
-    rebuild()
+    # rebuild() used to return None whatever happened - missing token, empty
+    # downloads/, nothing matched - and this returned 0 regardless. A scripted
+    # `cli.py rebuild && cli.py train-ensemble` would then train on whatever
+    # stale dataset was lying around, which is exactly the silent failure the
+    # exit-code contract exists to prevent.
+    if not rebuild():
+        print("Rebuild did not produce a dataset.")
+        return 1
     return 0
 
 

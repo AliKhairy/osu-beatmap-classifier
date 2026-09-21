@@ -15,12 +15,12 @@ curating the data from a specific collection of beatmaps.
 """
 
 import os
-import json
 import time
 from dotenv import load_dotenv
 from osu_parser import OsuFileParser
 from echosu_api import EchoOsuAPI
 from tag_scraper import tag_counts, filter_tags
+from dataset_builder import save_dataset
 
 # --- Configuration ---
 # Load environment variables from the .env file (e.g., for API keys).
@@ -40,14 +40,15 @@ def rebuild():
     """Main function to orchestrate the dataset rebuilding process."""
     if not ECHO_API_TOKEN:
         print("Error: ECHO_API_TOKEN not found. Please create a .env file.")
-        return
+        return False
 
     print(
         f"Starting dataset rebuild from local files in '{LOCAL_OSU_FOLDER}'...")
 
     if not os.path.exists(LOCAL_OSU_FOLDER):
         os.makedirs('downloads')
-        return
+        print(f"Created empty '{LOCAL_OSU_FOLDER}'. Put .osu files in it and re-run.")
+        return False
 
     echo_api = EchoOsuAPI(ECHO_API_TOKEN)
     new_dataset = []
@@ -56,7 +57,7 @@ def rebuild():
 
     if total_files == 0:
         print(f"No .osu files found in '{LOCAL_OSU_FOLDER}'. Aborting.")
-        return
+        return False
 
     print(f"Found {total_files} local .osu files to process.")
 
@@ -133,10 +134,15 @@ def rebuild():
     # Step 7: Save the completed new dataset to the output file.
     print(
         f"\nRebuild complete. Created a dataset with {len(new_dataset)} maps.")
-    with open(OUTPUT_DATASET_FILE, 'w', encoding='utf-8') as f:
-        json.dump(new_dataset, f, indent=2)
+    # save_dataset writes atomically (temp file + rename) and refuses to save
+    # an empty dataset over a good one. The plain json.dump here did neither, so
+    # a crash mid-write destroyed a file that costs hours of scraping, and a run
+    # that matched nothing silently truncated it to [].
+    if not save_dataset(new_dataset, OUTPUT_DATASET_FILE):
+        print("Rebuild produced no usable maps; the existing dataset is unchanged.")
+        return False
 
-    print(f"Successfully saved new dataset to '{OUTPUT_DATASET_FILE}'.")
+    return True
 
 
 if __name__ == "__main__":
