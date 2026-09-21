@@ -4,11 +4,20 @@ FROM python:3.12-slim
 # 2. Set the folder inside the container where everything happens.
 WORKDIR /app
 
-# 3. Copy ONLY requirements.txt in (not the whole project yet).
-COPY requirements.txt .
+# 3. Copy ONLY the requirements files in (not the whole project yet).
+COPY requirements.txt requirements-mlops.txt ./
 
-# 4. Install the dependencies.
+# 4. Install the dependencies, training deps first.
+#
+# Two layers, not one, and in this order on purpose: requirements.txt holds the
+# heavy, near-frozen training stack (TensorFlow), while requirements-mlops.txt
+# changes far more often. Splitting them means editing an mlflow pin rebuilds
+# only the small second layer and reuses the cached TensorFlow install.
+#
+# requirements-dev.txt (pytest, ruff) is deliberately NOT here - a production
+# image has no reason to carry a test runner.
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-mlops.txt
 
 # 5. NOW copy the rest of the source code in.
 COPY . .

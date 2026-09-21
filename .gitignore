@@ -22,3 +22,22 @@ downloads/
 .vscode/
 .DS_Store
 *.png
+
+# MLOps local state. The tracking DB and its artifact store are a local
+# scratchpad, not a deliverable - a committed mlruns/ would be both huge and
+# meaningless on anyone else's machine.
+mlruns/
+mlflow.db
+.prefect/
+
+# Candidate models awaiting a promotion decision. Only promoted artifacts reach
+# the repo root, and those are ignored by the *.keras / *.pkl rules above.
+candidates/
+
+# Feature extraction cache, keyed on dataset hash.
+.cache/
+
+# Generated reports.
+drift_report.html
+drift_reports/
+*.onnx
