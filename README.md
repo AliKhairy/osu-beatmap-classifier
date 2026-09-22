@@ -151,7 +151,7 @@ flowchart TD
     F --> G["evaluate --holdout<br/>macro / micro / per-tag F1"]
     D --> G
     G --> H{"promote<br/><b>the gate</b>"}
-    I[("MLflow<br/>mlflow.db + mlruns/")] -.->|champion + best-ever macro F1| H
+    I[("MLflow<br/>mlflow.db + mlruns/")] -.->|champion micro F1| H
     G -.->|params, metrics, per-tag CSV| I
     H -->|"rejected<br/><b>exit non-zero</b>"| X["STOP<br/><i>shipped models untouched</i>"]
     H -->|promoted| J["registry: new version<br/>champion alias moves"]

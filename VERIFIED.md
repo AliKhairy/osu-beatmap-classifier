@@ -413,20 +413,42 @@ wrong number is the exact failure this phase is supposed to prevent.
 ## 8. Tests and lint
 
 ```
-$ python -m pytest tests/ -q
-.....................................                                    [100%]
-37 passed
+$ pytest -q
+..............................................                           [100%]
+46 passed
 
 $ python -m ruff check .
 All checks passed!
 ```
 
-`tests/test_gate.py` (16 tests) covers `promote.decide` — better, worse within
-tolerance, worse beyond tolerance, the inclusive boundary at exactly
-`champion - tolerance`, no champion, zero tolerance, a negative tolerance being
-rejected, a missing tolerance refusing to guess, and the ratchet case: a
-candidate that beats the incumbent but sits below `best_ever - tolerance` must
-be rejected.
+Run as bare `pytest`, which is what CI runs — see section 10 for why that
+distinction mattered.
+
+`tests/test_gate.py` (25 tests) covers `promote.decide`, in four groups:
+
+- **The calibrated constants themselves** — that `DEFAULT_TOLERANCE` really is
+  `TOLERANCE_K * MICRO_F1_SIGMA`, that `k` is 4 rather than a rounding of "about
+  3 sigma", and that the reference is the fixed v1 champion score. If someone
+  edits a constant without redoing the calibration, this is where it surfaces.
+- **The micro F1 checks** — clearly better, worse within tolerance, worse beyond
+  it, the inclusive boundary at exactly `champion - tolerance` and one ULP
+  below, no champion, and no champion with a bad model (an empty registry is not
+  a licence to ship anything: the fixed reference still applies).
+- **The ratchet guard** — a candidate that beats a degraded champion but fails
+  the fixed reference must be rejected; the reference can be disabled
+  explicitly; and a simulated chain of ten successive as-bad-as-allowed
+  promotions cannot drift below the reference. This replaces the earlier
+  `best_ever - tolerance` rule, which was removed: best-ever is the maximum of
+  many noisy runs, so it is biased upward and only ever rises (section 12).
+- **The never-predicted guard and reporting** — going mute on extra supported
+  tags rejects, the measured +1 allowance admits ordinary variation, one beyond
+  it rejects, the rule is skipped when not measurable, and every check is
+  recorded on a pass as well as a failure.
+
+Plus tolerance validation (negative rejected, zero legal but strict) and
+`summarise_spread` reporting both stdev and max pairwise gap — both, because the
+tolerance is derived from stdev while the gap is what misled the first
+calibration, and keeping both visible makes that mistake harder to repeat.
 
 `tests/test_features.py` (21 tests) covers the extractor, including a
 **golden-vector regression**: `tests/golden_feature_vector.json` pins the exact
@@ -525,9 +547,28 @@ IDENTICAL - all 8 shipped artifacts unchanged since before any training ran
 ```
 
 Every candidate trained into `candidates/<name>/`, and every promotion test
-wrote to a temp directory via `--root-dir`. **Promoting a candidate into the
-real repo root has not been done and is left as an explicit decision**, to be
-made after reviewing the numbers above.
+wrote to a temp directory via `--root-dir`.
+
+**Decision: no candidate was promoted.** The shipped ensemble scores higher on
+the gate metric than every one of the ten retrains:
+
+```
+champion micro_f1       : 0.556967
+best of the 10 retrains : 0.556315  (seed 7)
+champion beats all 10   : True
+margin over the best    : +0.000652
+```
+
+So replacing it would make the deployed model slightly worse, and the gate would
+be being used to wave through a regression it was built to stop. The shipped
+models stay as they are.
+
+Worth noting the two metrics disagree about which model is best: seed 7 has the
+higher macro F1 (0.362552 vs the champion's 0.355539) while the champion has the
+higher micro F1. That is the macro-vs-micro tension from section 12 showing up
+in a real decision rather than in the abstract — and with macro's sigma at
+0.00655, seed 7's macro advantage is well inside the noise, while the champion's
+micro advantage is small but measured on the steadier metric.
 
 ---
 
@@ -573,6 +614,10 @@ invocations rather than bending the CI command to match a local habit. Verified
 under bare `pytest`, `python -m pytest`, and bare `pytest` from an unrelated
 working directory: 37 passed in each. Recorded because the lesson generalises —
 a verification that only runs one way has not been verified.
+
+(The counts in this section are the suite as it stood at that point. Rebuilding
+the gate in section 12 replaced the gate tests; the suite is 46 tests now, as
+section 8 shows.)
 
 ---
 

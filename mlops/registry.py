@@ -185,29 +185,19 @@ def get_champion():
     return int(mv.version), mv.run_id, (float(f1) if f1 is not None else None)
 
 
-def get_best_ever(metric=MACRO_F1_METRIC):
-    """
-    Best metric value across every registered version.
-
-    This is the ratchet guard's floor: without it, a chain of candidates each
-    barely clearing the incumbent walks the model steadily downhill.
-    """
-    client = _client()
-    try:
-        versions = client.search_model_versions("name='%s'" % REGISTERED_MODEL_NAME)
-    except Exception:
-        return None
-
-    best = None
-    for v in versions:
-        try:
-            run = client.get_run(v.run_id)
-        except Exception:
-            continue
-        value = run.data.metrics.get(metric)
-        if value is not None and (best is None or value > best):
-            best = float(value)
-    return best
+# A get_best_ever() helper used to live here, returning the best metric across
+# every registered version so the gate could floor candidates against it. It was
+# deliberately removed rather than left unused.
+#
+# Best-ever is the maximum of many noisy runs: it is biased upward (measured at
+# ~1.9 sigma on this data) and can only ever rise, so a floor anchored to it
+# tightens on its own until it rejects ordinary reruns of the champion's own
+# configuration. Measured, it more than doubled honest-rerun rejections - 3 of 10
+# against the real champion, 7 of 10 with a best-ever floor added.
+#
+# The ratchet floor is a fixed reference instead (mlops/promote.py:
+# REFERENCE_MICRO_F1). Leaving a working get_best_ever() here would invite
+# someone to wire it back in; the reasoning is kept, the function is not.
 
 
 def set_champion(version):
