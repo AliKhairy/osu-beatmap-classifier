@@ -871,6 +871,47 @@ A calibration whose script is lost is just a number someone once believed.
 
 ---
 
+## 13. The hard constraints were not violated
+
+The brief forbids changing the 90-feature vector, its order, the scaler, or the
+0.27 threshold, because the C# app and its parity goldens depend on them. A text
+diff cannot show this cleanly - line-ending normalisation rewrote whole files -
+so it is verified behaviourally instead.
+
+**The feature vector is bitwise identical to `origin/main`.** Both versions of
+the extractor were loaded side by side in one process and run over the same
+committed map:
+
+```
+$ git show origin/main:neural_model.py > <tmp>/neural_model.py
+$ python  # import both, extract the same map with each
+
+origin/main : len 90, 2 sections
+this branch : len 90, 2 sections
+shapes equal      : True
+BITWISE identical : True
+max abs difference: 0.000e+00
+```
+
+Not "close to", not "within tolerance" - the same floats. The only changes to
+`neural_model.py` are additive (`BASE_FEATURE_NAMES` / `FEATURE_NAMES`, which
+nothing computes from), the removal of two provably dead variables, and comment
+or loop-variable renames.
+
+The other three constraints:
+
+- **Feature order** - implied by the bitwise result above, and independently
+  asserted by `AGGREGATED_FEATURE_COUNT == FEATURE_COUNT * 3 + 3` plus the
+  golden-vector test.
+- **The scaler** - still `StandardScaler` fit on all rows before splitting
+  (`mlops/split.py:scale_all`), including the pre-existing leakage, which was
+  deliberately preserved. Section 2 shows a refit reproduces the shipped
+  `ensemble_scaler.pkl` to 1e-17.
+- **The 0.27 threshold** - now a named constant (`ensemble_evaluator.THRESHOLD`)
+  instead of a scattered literal, with the same value, pinned by a test.
+
+---
+
 ## Caveats
 
 These qualify the numbers above. None of them are defects introduced by this
