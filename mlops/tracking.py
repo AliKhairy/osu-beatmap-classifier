@@ -60,9 +60,13 @@ def log_evaluation(summary, per_tag, params=None, extra_artifacts=None,
     the CSV is for a human reading one run and the metrics are for comparing
     sixty runs in the UI without opening any of them.
     """
-    import mlflow
-
-    mlflow.set_tracking_uri(tracking_uri())
+    # setup(), not just set_tracking_uri(). Setting the URI alone leaves the
+    # ACTIVE EXPERIMENT at whatever it happened to be - which, in a fresh
+    # process, is "Default" (id 0). Runs from evaluate --holdout, drift and the
+    # flow's evaluate task were all landing there instead of alongside the
+    # registered models, so the UI showed one experiment with a single run and
+    # the rest scattered in Default.
+    mlflow = setup()
 
     with mlflow.start_run(run_name=run_name, nested=nested) as run:
         if params:
