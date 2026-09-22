@@ -840,7 +840,7 @@ metric                      mean     sigma       min       max       gap  gap/si
 micro_f1                0.553580  0.001793  0.550834  0.556315  0.005482     3.06
 macro_f1                0.350302  0.006553  0.338858  0.362552  0.023694     3.62
 macro_f1_supported      0.453592  0.005607  0.447350  0.465270  0.017920     3.20
-weighted_f1             0.532557  0.002804  0.526996  0.538154  0.011158     3.39
+weighted_f1             0.532557  0.003295  0.526996  0.538154  0.011158     3.39
 
 never_predicted_supported across seeds: [1,1,1,1,1,1,2,1,2,1] (champion 1, sigma 0.42)
   smallest allowance admitting every run: +1
