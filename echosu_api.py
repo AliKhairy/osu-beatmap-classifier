@@ -43,5 +43,5 @@ class EchoOsuAPI:
             if tags_list:
                 return [{"tag": tag['name']} for tag in tags_list]
             return []
-        except requests.exceptions.RequestException as e:
+        except requests.exceptions.RequestException:
             return []

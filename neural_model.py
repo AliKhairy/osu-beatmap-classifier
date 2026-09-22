@@ -27,6 +27,52 @@ CLASSIFIER_PATH = 'beatmap_classifier.pkl'
 # in the C# app's FeatureExtractor.cs). The final map vector is FEATURE_COUNT*3 + 3.
 FEATURE_COUNT = 29
 
+# Human-readable name for each of the 29 per-section features, in the exact order
+# extract_meaningful_features() builds them. Purely descriptive - nothing reads
+# these to compute anything, so this list cannot change the vector. It exists so
+# the drift report can say "std_time_gap drifted" instead of "column 48 drifted",
+# and so the sample feature CSV has a self-describing header.
+#
+# If you ever add a feature, this list and FEATURE_COUNT move together - the
+# assert below fails loudly rather than letting the names drift out of step.
+BASE_FEATURE_NAMES = [
+    # 0-3: stream counters
+    'burst_count', 'stream_count', 'max_continuous_stream', 'total_stream_notes',
+    # 4-5: global rhythm (finger control)
+    'rhythm_change_ratio', 'global_rhythm_variance',
+    # 6-7: slider and stream spacing variance
+    'max_stream_spacing_variance', 'buzz_slider_count',
+    # 8-11: local instability (tech/reading)
+    'finger_control_score', 'avg_rhythm_instability', 'avg_spacing_instability',
+    'slider_disruption_rate',
+    # 12-16: distance and jump geography
+    'num_objects', 'objects_per_sec', 'mean_distance', 'std_distance',
+    'p95_distance',
+    # 17-19: time gaps and base sliders
+    'mean_time_gap', 'std_time_gap', 'slider_ratio',
+    # 20-21: base angles
+    'mean_angle', 'std_angle',
+    # 22-28: micro-patterns and geometry
+    'sharp_angle_ratio', 'square_angle_ratio', 'wide_angle_ratio',
+    'linear_angle_ratio', 'vertical_jump_ratio', 'perfect_overlap_ratio',
+    'true_linear_ratio',
+]
+assert len(BASE_FEATURE_NAMES) == FEATURE_COUNT, (
+    f"BASE_FEATURE_NAMES has {len(BASE_FEATURE_NAMES)} entries, "
+    f"FEATURE_COUNT is {FEATURE_COUNT}")
+
+# The 90 aggregated map-level names, matching the concatenation order in
+# _aggregate_features_for_map(): max over sections, then mean, then std, then
+# the three hybrid flags.
+FEATURE_NAMES = (
+    [f'max_{n}' for n in BASE_FEATURE_NAMES]
+    + [f'mean_{n}' for n in BASE_FEATURE_NAMES]
+    + [f'std_{n}' for n in BASE_FEATURE_NAMES]
+    + ['has_peak_stream_section', 'has_peak_jump_section', 'is_stream_jump_hybrid']
+)
+AGGREGATED_FEATURE_COUNT = len(FEATURE_NAMES)
+assert AGGREGATED_FEATURE_COUNT == FEATURE_COUNT * 3 + 3
+
 # --- TUNING CONSTANTS ---
 #
 # Every one of these is duplicated in FeatureExtractor.cs in the app repo, under
@@ -177,7 +223,7 @@ class ImprovedBeatmapClassifier:
         Converts a list of hit objects into a numerical feature vector,
         incorporating Global Snap Variance to detect complex rhythms.
         """
-        
+
         if not hit_objects or len(hit_objects) < MIN_OBJECTS_FOR_FEATURES:
             return np.zeros(FEATURE_COUNT)
 
@@ -192,7 +238,7 @@ class ImprovedBeatmapClassifier:
 
         objects_per_sec = num_objects / total_duration
         time_gaps = np.diff(times)
-        time_gaps[time_gaps == 0] = 1 
+        time_gaps[time_gaps == 0] = 1
         distances = np.linalg.norm(np.diff(positions, axis=0), axis=1)
 
         features = []
@@ -200,7 +246,7 @@ class ImprovedBeatmapClassifier:
         # --- ABSOLUTE SEQUENCE TRACKING (The Hybrid Fix) ---
         sequence_lengths = []
         current_len = 0
-        
+
         # Distance < 120 ensures we don't count high-BPM cross-screen jumps as "streams".
         for gap, dist in zip(time_gaps, distances):
             if gap < STREAM_GAP_MS and dist < STREAM_MAX_SPACING_PX:
@@ -212,8 +258,8 @@ class ImprovedBeatmapClassifier:
         if current_len > 0:
             sequence_lengths.append(current_len + 1)
 
-        burst_count = sum(1 for l in sequence_lengths if BURST_MIN_LENGTH <= l <= BURST_MAX_LENGTH)
-        stream_count = sum(1 for l in sequence_lengths if l >= STREAM_MIN_LENGTH)
+        burst_count = sum(1 for seq_len in sequence_lengths if BURST_MIN_LENGTH <= seq_len <= BURST_MAX_LENGTH)
+        stream_count = sum(1 for seq_len in sequence_lengths if seq_len >= STREAM_MIN_LENGTH)
         # --- VARIABLE STREAMS (Spacing Variance) ---
         # Find the maximum spacing instability within any single stream
         rhythm_instabilities, spacing_instabilities = [], []
@@ -234,10 +280,10 @@ class ImprovedBeatmapClassifier:
                 slides = obj[6]
                 length = obj[7]
                 # High repeats + short pixel length = buzz slider
-                if slides >= BUZZ_SLIDER_MIN_SLIDES and length < BUZZ_SLIDER_MAX_LENGTH_PX: 
+                if slides >= BUZZ_SLIDER_MIN_SLIDES and length < BUZZ_SLIDER_MAX_LENGTH_PX:
                     buzz_slider_count += 1
         max_continuous_stream = max(sequence_lengths) if sequence_lengths else 0
-        total_stream_notes = sum(l for l in sequence_lengths if l >= STREAM_MIN_LENGTH)
+        total_stream_notes = sum(seq_len for seq_len in sequence_lengths if seq_len >= STREAM_MIN_LENGTH)
 
         # --- GLOBAL SNAP VARIANCE (The Finger Control/Tech Fix) ---
         # Detects when a mapper shifts between 1/2, 1/3, 1/4, and 1/6 snaps.
@@ -255,11 +301,12 @@ class ImprovedBeatmapClassifier:
         # --- Local Instability Metrics ---
         rhythm_instabilities, spacing_instabilities = [], []
         dense_indices = np.where(time_gaps < STREAM_GAP_MS)[0]
-        
+
         if len(dense_indices) > 0:
             groups = np.split(dense_indices, np.where(np.diff(dense_indices) != 1)[0] + 1)
             for group in groups:
-                if len(group) < 2: continue
+                if len(group) < 2:
+                    continue
                 rhythm_instabilities.append(np.std(time_gaps[group]))
                 spacing_instabilities.append(np.std(distances[group]))
 
@@ -272,21 +319,21 @@ class ImprovedBeatmapClassifier:
 
         # --- MICRO-PATTERNS & GEOMETRY ---
         slider_ratio = np.sum(is_slider) / num_objects
-        
+
         # Angle Buckets (in radians. Pi = 3.14 = 180 degrees)
         sharp_angles, square_angles, wide_angles, linear_angles = 0, 0, 0, 0
         angles = np.array([])
-        
+
         if num_objects > 2:
             v1 = positions[1:-1] - positions[:-2]
             v2 = positions[2:] - positions[1:-1]
             norm_prod = np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1)
             valid_indices = norm_prod > 0
-            
+
             if np.any(valid_indices):
                 cos_angles = np.clip(np.sum(v1[valid_indices] * v2[valid_indices], axis=1) / norm_prod[valid_indices], -1.0, 1.0)
                 angles = np.arccos(cos_angles)
-                
+
                 # Categorize the angles
                 sharp_angles = np.sum(angles < ANGLE_SHARP_MAX)   # < 60 degrees (Snap Aim / Awkward)
                 square_angles = np.sum((angles > ANGLE_SQUARE_MIN) & (angles < ANGLE_SQUARE_MAX)) # ~90 degrees (Square Jumps)
@@ -311,32 +358,29 @@ class ImprovedBeatmapClassifier:
         if num_objects >= 4:
             for i in range(num_objects - 3):
                 chunk = positions[i:i+4]
-                
-                # Find the bounding box width and height
-                x_spread = np.max(chunk[:, 0]) - np.min(chunk[:, 0])
-                y_spread = np.max(chunk[:, 1]) - np.min(chunk[:, 1])
-                
-                # We need to find the principal axis (the length of the line)
-                # and the orthogonal spread (how "fat" the line is).
-                # A simple approximation: max spread vs min spread.
-                # However, a perfect diagonal has equal X and Y spread!
-                
-                # Better approach: check the distance from points to the line connecting start and end.
+
+                # A bounding-box test (max X spread vs max Y spread) was tried
+                # first and does not work: a perfect diagonal line has equal X
+                # and Y spread, so it reads as "fat" rather than linear.
+                #
+                # What follows instead measures the perpendicular distance of
+                # the middle two points from the line joining first to last,
+                # which is orientation-independent.
                 start_pt = chunk[0]
                 end_pt = chunk[-1]
                 line_vec = end_pt - start_pt
                 line_len = np.linalg.norm(line_vec)
-                
+
                 if line_len > LINEAR_CHUNK_MIN_LENGTH_PX: # The sequence must actually cover some distance
                     # Normalize the line vector
                     line_dir = line_vec / line_len
                     # Normal vector (perpendicular to the line)
                     normal_vec = np.array([-line_dir[1], line_dir[0]])
-                    
+
                     # Calculate how far the middle two points deviate from the straight line
                     dev1 = np.abs(np.dot(chunk[1] - start_pt, normal_vec))
                     dev2 = np.abs(np.dot(chunk[2] - start_pt, normal_vec))
-                    
+
                     # If both middle points are very close to the line (less than 15 pixels off), it's linear.
                     if dev1 < LINEAR_MAX_DEVIATION_PX and dev2 < LINEAR_MAX_DEVIATION_PX:
                         true_linear_sequences += 1
@@ -353,7 +397,7 @@ class ImprovedBeatmapClassifier:
             # 8-11: Local Instability (Tech/Reading)
             finger_control_score, avg_rhythm_instability, avg_spacing_instability, slider_disruption_rate,
             # 12-16: Distance & Jump Geography
-            num_objects, objects_per_sec, 
+            num_objects, objects_per_sec,
             np.mean(distances) if distances.size > 0 else 0,
             np.std(distances) if distances.size > 0 else 0,
             np.percentile(distances, 95) if distances.size > 0 else 0, # <-- This is now Index 16
@@ -422,13 +466,13 @@ class ImprovedBeatmapClassifier:
 
         has_peak_jump_section = 1 if np.max(
             features_np[:, IDX_PERCENTILE_95_DISTANCE]) > PEAK_JUMP_MIN_P95_PX else 0
-        
+
         # Explicit Hybrid Override
         is_stream_jump_hybrid = 1 if has_peak_stream_section and has_peak_jump_section else 0
 
         # --- Final Aggregation ---
         # Combine max, mean, and std of all base features across all sections.
-        # We removed manual heuristic scores to allow the Keras Dense layers to 
+        # We removed manual heuristic scores to allow the Keras Dense layers to
         # map the non-linear relationships natively.
         aggregated_vector = np.concatenate([
             np.max(features_np, axis=0),
@@ -523,7 +567,7 @@ class ImprovedBeatmapClassifier:
 
     def predict_tags(self, osu_file_path, threshold=0.27):
         """
-        Predicts tags for a single .osu file, with post-processing 
+        Predicts tags for a single .osu file, with post-processing
         to correct neural network bias on hybrid maps.
         """
         if not self.is_trained:
@@ -560,8 +604,8 @@ class ImprovedBeatmapClassifier:
                 predicted_tags.append(tag)
 
         # --- EXPERT SYSTEM POST-PROCESSING (Hybrid Bias Correction) ---
-        max_stream_length = raw_features[2] 
-        
+        max_stream_length = raw_features[2]
+
         # We only force the stream tag if the map is NOT an alt map.
         # Find the probability of 'alternating' to act as a safety check.
         alt_prob = 0.0
@@ -577,7 +621,7 @@ class ImprovedBeatmapClassifier:
 
         # Sort alphabetically for clean output
         predicted_tags.sort()
-        
+
         return predicted_tags if predicted_tags else ["No tags above threshold."]
 
     def test_multiple_maps(self, songs_folder="songs", threshold=0.27, max_maps=10):
