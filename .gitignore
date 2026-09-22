@@ -52,4 +52,12 @@ drift_reports/
 # Committing one risks it drifting out of sync with the .onnx files beside it,
 # which is a silent corruption rather than an error.
 model_config.json
+
+# Calibration and measurement outputs. Regenerable with tools/calibrate_gate.py,
+# and the numbers that matter are transcribed into VERIFIED.md - a committed copy
+# would just be a second version to drift out of date.
 seed_calibration.json
+gate_calibration.json
+metric_stability.json
+excluded_tag_guard.json
+weak_gate_scores.json

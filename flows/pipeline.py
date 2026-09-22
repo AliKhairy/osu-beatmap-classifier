@@ -89,9 +89,14 @@ def promote_task(candidate_dir, dataset, threshold, tolerance, root_dir):
     import cli
 
     logger = get_run_logger()
+
+    # Built by hand rather than parsed, so every attribute cmd_promote reads has
+    # to be listed here. reference_micro_f1=None means "use the calibrated
+    # default", matching what the command line does when the flag is omitted.
     args = argparse.Namespace(
         candidate=candidate_dir, dataset=dataset, threshold=threshold,
-        tolerance=tolerance, root_dir=root_dir, run_name='pipeline-promote')
+        tolerance=tolerance, root_dir=root_dir, run_name='pipeline-promote',
+        reference_micro_f1=None)
 
     code = cli.cmd_promote(args)
     if code != 0:

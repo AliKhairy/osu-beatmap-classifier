@@ -270,6 +270,13 @@ def cmd_promote(args):
               "Run the seed calibration first; the gate will not guess.")
         return 1
 
+    # A reference of 0 means "no fixed floor"; None means "use the calibrated
+    # default". Distinguished explicitly so disabling the ratchet is deliberate.
+    if args.reference_micro_f1 is None:
+        args.reference_micro_f1 = gate.REFERENCE_MICRO_F1
+    elif args.reference_micro_f1 <= 0:
+        args.reference_micro_f1 = None
+
     prepared = split_mod.prepare_dataset(args.dataset)
     sp = split_mod.fixed_split(prepared)
 
@@ -287,7 +294,7 @@ def cmd_promote(args):
     # metric. If the dataset moved, the stored number describes a different test
     # set and comparing against it would be meaningless.
     champion = registry.get_champion()
-    champion_f1 = None
+    champion_summary = None
     champion_dir = None
     if champion is not None:
         version, run_id, stored_f1 = champion
@@ -295,10 +302,9 @@ def cmd_promote(args):
               f"stored macro_f1={stored_f1}")
         try:
             champion_dir = registry.download_champion_ensemble()
-            champ_summary, _, _ = score_on_holdout(
+            champion_summary, _, _ = score_on_holdout(
                 champion_dir, prepared, sp, threshold=args.threshold)
-            champion_f1 = champ_summary['macro_f1']
-            print(f"Champion re-scored on this split: {format_summary(champ_summary)}")
+            print(f"Champion re-scored on this split: {format_summary(champion_summary)}")
         except Exception as e:                      # noqa: BLE001
             print(f"Could not re-score the champion: {e}")
             registry.cleanup(champion_dir)
@@ -306,14 +312,29 @@ def cmd_promote(args):
     else:
         print("No champion registered yet.")
 
-    best_ever = registry.get_best_ever()
+    # The gate reads micro F1 plus the never-predicted count among tags with
+    # real support. It deliberately does NOT use best-ever as a floor: that is
+    # the maximum of many noisy runs, so it is biased upward and only ever
+    # rises, tightening the gate over time until it rejects ordinary reruns.
+    # The ratchet floor is a fixed reference instead - see mlops/promote.py.
+    candidate_scores = gate.Scores(
+        micro_f1=cand_summary['micro_f1'],
+        never_predicted_included=cand_summary.get('labels_never_predicted_supported'))
+    champion_scores = None
+    if champion_summary is not None:
+        champion_scores = gate.Scores(
+            micro_f1=champion_summary['micro_f1'],
+            never_predicted_included=champion_summary.get(
+                'labels_never_predicted_supported'))
+
     verdict = gate.decide(
-        candidate_f1=cand_summary['macro_f1'],
-        champion_f1=champion_f1,
-        best_ever_f1=best_ever,
+        candidate=candidate_scores,
+        champion=champion_scores,
+        reference_micro_f1=args.reference_micro_f1,
         tolerance=tolerance)
 
-    print(f"\n{verdict}")
+    print()
+    print(verdict.report())
     registry.cleanup(champion_dir)
 
     if not verdict.promote:
@@ -506,8 +527,13 @@ def build_parser():
     p.add_argument('--dataset', default='ml_dataset.json')
     p.add_argument('--threshold', type=float, default=0.27)
     p.add_argument('--tolerance', type=float, default=None,
-                   help='How much lower than the baseline macro F1 is acceptable. '
-                        'Defaults to the calibrated value in promote.py.')
+                   help='How much lower than the baseline micro F1 is acceptable. '
+                        'Defaults to the measured value in mlops/promote.py '
+                        '(4 x the seed-to-seed standard deviation).')
+    p.add_argument('--reference-micro-f1', type=float, default=None,
+                   help='Fixed floor the candidate must also clear, so a chain of '
+                        'within-tolerance promotions cannot ratchet quality down. '
+                        'Defaults to the v1 champion score; pass 0 to disable.')
     p.add_argument('--root-dir', default='.',
                    help='Where a promoted model is copied (default: . - the repo '
                         'root the app workflow reads). Point at a temp dir to '

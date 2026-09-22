@@ -4,6 +4,11 @@ Every claim below was produced by running the stated command on this machine.
 Anything not actually run is in [Not done](#not-done) or [Caveats](#caveats) —
 not asserted anywhere else.
 
+**Sections 4 and 5 are superseded.** They record the first promotion gate, which
+used macro F1 with a tolerance of 0.008. That calibration was wrong; section 11
+shows why and section 12 documents the gate that replaced it. They are kept
+because how the number came out wrong is part of the record.
+
 Environment: Windows 11, Python 3.12.0, TensorFlow 2.21.0, Keras 3.15.0,
 scikit-learn 1.9.0, numpy 2.5.0. Dataset `ml_dataset.json`, sha256
 `a88572be06c657b0ce4a814d7b60d31340af70e45dcb9e87899474b515a27ef6`.
@@ -157,7 +162,13 @@ gate compares against.
 
 ---
 
-## 4. The gate tolerance was measured, not chosen
+## 4. The gate tolerance was measured, not chosen [superseded]
+
+> **SUPERSEDED.** This section records the first gate, which used macro F1
+> with a tolerance of 0.008. That calibration was wrong - see section 11 -
+> and the gate was rebuilt in section 12. Kept because how the number was
+> got wrong is part of the record, not because it describes current
+> behaviour.
 
 A tolerance has to sit above the noise floor of training, or it rejects honest
 reruns; far above it, and it waves real regressions through. So it was measured
@@ -213,11 +224,26 @@ Two honest limits on this number:
   best-ever floor (below) is what prevents a slightly loose tolerance from
   accumulating across promotions.
 
-Raw numbers: `seed_calibration.json`.
+Reproduce with the committed tool (existing `candidates/seed-N/` directories are
+reused, so adding seeds to an earlier calibration is cheap):
+
+```bash
+python -m tools.calibrate_gate --seeds 1 2 3 4 5 6 7 8 9 10
+```
+
+It prints the spread of every candidate gate metric and the derived constants,
+and writes `gate_calibration.json`. The constants in `mlops/promote.py` are
+measurements; this is the supported way to change them.
 
 ---
 
-## 5. Registry and promotion gate
+## 5. Registry and promotion gate [superseded]
+
+> **SUPERSEDED.** This section records the first gate, which used macro F1
+> with a tolerance of 0.008. That calibration was wrong - see section 11 -
+> and the gate was rebuilt in section 12. Kept because how the number was
+> got wrong is part of the record, not because it describes current
+> behaviour.
 
 ### The shipped models are champion v1
 
@@ -505,6 +531,346 @@ made after reviewing the numbers above.
 
 ---
 
+## 10. Verified by CI rather than locally
+
+The Docker image build could not be run on the dev machine — Docker Desktop's
+daemon was not running (`failed to connect to the docker API at
+npipe:////./pipe/dockerDesktopLinuxEngine`). It is covered by CI on PR #2
+instead, where every step passed:
+
+```
+success  Build image
+success  CLI starts and lists its subcommands
+success  Every subcommand is wired up            (all 10, incl. promote/drift/pipeline)
+success  Unknown subcommand is rejected
+success  Missing prerequisites exit non-zero
+success  The promotion gate refuses to run on nothing
+success  No secrets or bulk data in the image    (incl. the new mlruns/mlflow.db checks)
+```
+
+Both jobs green: `Build image and smoke-test the CLI` 1m52s,
+`Lint and unit tests` 1m0s.
+
+### CI caught a bug in the verification itself
+
+The first CI run **failed**, and the cause was my own testing method, not the
+code:
+
+```
+tests/test_gate.py:12: in <module>
+    from mlops.promote import Verdict, decide, summarise_spread
+E   ModuleNotFoundError: No module named 'mlops'
+```
+
+`python -m pytest` puts the current directory on `sys.path`; the bare `pytest`
+console script does not, and pytest's default prepend import mode only adds
+`tests/`. Every local run in this branch used the `-m` form, so "37 tests pass"
+was only ever true for that one invocation — the suite had never worked under
+the command CI runs.
+
+Fixed with `pythonpath = ["."]` in `[tool.pytest.ini_options]`, which fixes both
+invocations rather than bending the CI command to match a local habit. Verified
+under bare `pytest`, `python -m pytest`, and bare `pytest` from an unrelated
+working directory: 37 passed in each. Recorded because the lesson generalises —
+a verification that only runs one way has not been verified.
+
+---
+
+## 11. Recalibration: 10 seeds, and why 0.008 was wrong
+
+The 4-sample estimate in section 4 was not merely a lower bound, it was
+misleading. Training seed 7 (run later by the flow verification) scored macro F1
+0.3626, outside the range of all four original samples. Recalibrated over **10
+training seeds** on the same frozen 929-map holdout, scored by the same code
+path:
+
+```
+seed   macro_f1     micro_f1        seed   macro_f1     micro_f1
+1      0.347545     0.553012        6      0.345831     0.552480
+2      0.355068     0.553298        7      0.362552     0.556315
+3      0.350412     0.553891        8      0.352205     0.551966
+4      0.345370     0.552721        9      0.338858     0.550834
+5      0.349700     0.556060        10     0.355478     0.555224
+```
+
+```
+MACRO F1  mean 0.350302  stdev 0.006553  min 0.338858  max 0.362552  gap 0.023694  (6.76%)
+MICRO F1  mean 0.553580  stdev 0.001793  min 0.550834  max 0.556315  gap 0.005482  (0.99%)
+```
+
+**The macro spread is 0.0237 - three times the shipped 0.008.** Checked against
+the real runs, a 0.008 tolerance rejects honest reruns of the champion's own
+configuration, and how many depends on which baseline it is measured against:
+
+```
+vs the shipped champion 0.355539 (floor 0.347539): rejects 3 of 10 -> seeds 4, 6, 9
+  plus the best-ever floor  0.362552 (floor 0.354552): rejects 7 of 10 -> seeds 1,3,4,5,6,8,9
+```
+
+**3 of 10** is the honest figure for the gate as it would run today against the
+real champion. **7 of 10** is what happens once the best-ever floor is included,
+and that difference is the evidence against anchoring a floor to best-ever:
+best-ever here is seed 7, a single lucky draw sitting 1.87 sigma above the mean,
+and anchoring to it more than doubles the honest-rerun rejections. Seed 1
+(0.347545) clears the champion floor by 0.000006 - that margin is luck, not
+precision.
+
+### Tolerance basis: stdev, not max pairwise gap
+
+The original calibration used the max pairwise gap. That is an order statistic:
+its expectation grows with the number of runs (~ `sigma * sqrt(2 ln n)`), so it
+widens every time a seed is added and never converges. Standard deviation is a
+consistent estimator. Both are reported; `k * sigma` is the basis used.
+
+```
+metric                  sigma   2sigma   3sigma   maxgap  gap/sigma
+macro_f1              0.00655   0.0131   0.0197   0.0237       3.62
+macro_f1_supp5        0.00510   0.0102   0.0153   0.0173       3.40
+macro_f1_supp10       0.00561   0.0112   0.0168   0.0179       3.20
+macro_f1_supp20       0.00489   0.0098   0.0147   0.0154       3.14
+macro_f1_supp30       0.00417   0.0083   0.0125   0.0112       2.68
+weighted_f1           0.00329   0.0066   0.0099   0.0112       3.39
+micro_f1              0.00179   0.0036   0.0054   0.0055       3.06
+```
+
+The expected range of 10 normal samples is ~3.08 sigma. Every observed
+gap/sigma sits near that, so these spreads are consistent with ordinary
+Gaussian training noise rather than anything structural in a particular seed.
+
+### Why macro F1 is the noisy one
+
+This is a property of the label distribution, not bad luck. Across the 66 tags
+support runs 2..345 (median 48), and:
+
+```
+top-20 by support : mean f1 0.5780 | total support 3206
+bottom-20 by supp : mean f1 0.0979 | total support  131
+
+the 20 rarest tags carry 2.8% of all label instances
+```
+
+A tag with support 2 moves its own F1 by ~0.3-0.5 when a single holdout map
+flips, and that enters macro at 1/66 weight each. Macro F1 here is substantially
+a measurement of coin flips on tags that carry almost no signal.
+
+### Choosing the support floor, and a disclosure
+
+**Disclosure first: this is not a blind pre-registration.** The spreads for
+floors 5/10/20/30 were computed and seen before this rationale was written. It
+is recorded here so the reasoning can be checked against the outcome rather
+than presented as if it preceded it.
+
+**The criterion, which is a property of the holdout, not of the gate:**
+
+A per-tag F1 is only worth averaging if it is not dominated by single-map
+flips. On a 929-map holdout, one map changes a tag's recall by `1/support`. For
+a tag's F1 to be stable to roughly 10% - the level at which averaging 40-odd of
+them produces a meaningful number - that tag needs **support >= 10**.
+
+Applied to this holdout: support ranges 2..345, median 48. A floor of 10 keeps
+**49 of 66 tags (74%)**, and drops tags where a single map is more than 11% of
+the entire class. The dropped tags are the ones whose F1 is closer to a coin
+flip than a measurement.
+
+**The check that this was not chosen to flatter the gate:** support >= 30 gives
+the *lowest* spread of the four floors (2.39% vs 3.95% relative). If the floor
+had been picked to make the gate look best, it would have been 30, not 10.
+Floor 10 is chosen because 1/support crosses ~10% there, and it is accepted
+despite being the noisier option.
+
+**What the floor gives up, and how that is covered:** averaging only high-support
+tags means a model could stop predicting a low-support tag entirely without
+moving the metric. That is exactly the failure macro F1 was there to catch, so
+the floor is paired with a hard rule on `labels_never_predicted` rather than
+used alone.
+
+---
+
+## 12. The final gate, and its validation
+
+Rebuilt from the 10-seed measurements in section 11. It replaces the macro F1
+gate of sections 4 and 5, which is kept there only as a record of the mistake.
+
+### The design
+
+```
+metric              micro_f1
+sigma (10 seeds)    0.001793
+k                   4
+tolerance = k*sigma 0.007172
+fixed reference     0.556967   (the v1 champion; does not drift)
+never-predicted     champion's count among support>=10 tags, +1
+```
+
+A candidate is promoted iff **all** of:
+
+1. `micro_f1 >= champion  - tolerance` (skipped when there is no champion)
+2. `micro_f1 >= reference - tolerance` (fixed anchor)
+3. never-predicted tags with support >= 10 `<= champion's + 1`
+
+### Why micro F1, not macro
+
+Macro F1 has sigma 0.00655 and a range of 0.0237 across runs of the *identical*
+configuration - 6.8% of the metric. Any tolerance honestly calibrated to that
+noise permits roughly a 7% real regression, which is a formality rather than a
+gate. Micro F1 has sigma 0.00179, about 1% of the metric, so a tolerance
+calibrated to it still bites.
+
+### Why k = 4, not 2 or 3
+
+Not a rounding of "about 3 sigma". The tolerance is applied to the distance from
+a **fixed** champion, and that champion is itself one draw from the same noisy
+distribution - the v1 champion sits **1.89 sigma above the seed mean**. For a
+candidate landing at an unremarkable `mean - 2 sigma` to still pass:
+
+```
+tolerance >= (champion - mean) + 2 sigma = 1.89 sigma + 2 sigma ~= 3.9 sigma  ->  k = 4
+```
+
+Confirmed empirically: k = 3 rejects honest reruns, k = 4 does not.
+
+### Why a fixed reference instead of best-ever
+
+Best-ever is the maximum of many noisy draws, so it is biased upward - here by
+1.87 sigma - and it only ever rises. Anchoring to it measures every future
+candidate against the luckiest run that ever happened, and the gate silently
+tightens over time. Section 11 shows the cost directly: a 0.008 macro tolerance
+rejected 3 of 10 honest reruns against the real champion, but 7 of 10 once the
+best-ever floor was added.
+
+A fixed reference cannot drift. Set to the v1 champion's micro F1, so the rule
+reads: never ship a model meaningfully worse than what users already have.
+
+### What was dropped, and why
+
+`macro_f1_supported` (macro F1 over the 49 tags with support >= 10) was
+evaluated as a third check and **dropped**: across the full validation set - 10
+honest reruns plus the 1-epoch regression - it changed **zero** verdicts. It is
+still logged as a metric for diagnosis; it is simply not a rule, because a rule
+that never fires is only a rule to explain.
+
+A rule on the *total* never-predicted count was also rejected. That count swings
+11..16 across identical reruns (sigma 1.34), and a strict "must not increase"
+rejects 5 of 10 honest reruns - including seed 7, the best model in the set.
+Restricted to tags with support >= 10 the count is 1..2 (sigma 0.42), which is
+what makes rule 3 workable.
+
+### Validation
+
+Every model measured in this branch, through the real `mlops.promote.decide()`,
+against the v1 champion:
+
+```
+subject                micro_f1    never  verdict   expected
+------------------------------------------------------------------------
+honest seed 1          0.553012    1      PROMOTE   promote
+honest seed 2          0.553298    1      PROMOTE   promote
+honest seed 3          0.553891    1      PROMOTE   promote
+honest seed 4          0.552721    1      PROMOTE   promote
+honest seed 5          0.556060    1      PROMOTE   promote
+honest seed 6          0.552480    1      PROMOTE   promote
+honest seed 7          0.556315    2      PROMOTE   promote
+honest seed 8          0.551966    1      PROMOTE   promote
+honest seed 9          0.550834    2      PROMOTE   promote
+honest seed 10         0.555224    1      PROMOTE   promote
+1-epoch regression     0.414016    2      REJECT    reject
+
+margin of the WORST honest rerun:
+  honest seed 9  micro_f1 0.550834  floor 0.549795  clears by +0.001039
+
+how far the 1-epoch model is from passing:
+  micro_f1 0.414016  floor 0.549795  short by 0.135779 (18.9 x tolerance)
+
+RESULT: PASS (0 wrong verdicts out of 11)
+```
+
+The worst honest rerun clears by 0.58 sigma and the regression fails by 18.9x
+the tolerance, so neither outcome is marginal.
+
+### End to end through the real command
+
+Not just the pure function - the actual `cli.py promote`, against a throwaway
+tracking DB and a temp `--root-dir`.
+
+Empty registry. Note the fixed reference is checked even with no champion, so
+an empty registry is not a licence to ship anything:
+
+```
+$ python cli.py promote --candidate candidates/seed-1 --root-dir <temp>
+
+PROMOTE: no champion registered, promoting candidate (micro_f1=0.553012 never_predicted(support>=floor)=1) as the first one
+  [PASS] micro_f1 vs champion   no champion registered - skipped
+  [PASS] micro_f1 vs reference  0.553012 vs floor 0.549795 (reference 0.556967 - tol 0.007172)
+  [PASS] never-predicted tags   not measurable - skipped
+Registered version 1 and moved the 'champion' alias to it
+EXIT: 0
+```
+
+The 1-epoch regression against that champion:
+
+```
+$ python cli.py promote --candidate candidates/weak-1epoch --root-dir <temp>
+
+Candidate: micro_f1=0.4140 macro_f1=0.1745 ... never-predicted 2/49 supported, 9/66 overall
+Champion re-scored on this split: micro_f1=0.5530 macro_f1=0.3475 ... never-predicted 1/49 supported, 12/66 overall
+
+REJECT: micro_f1 vs champion: 0.414016 vs floor 0.545840; micro_f1 vs reference: 0.414016 vs floor 0.549795
+  [FAIL] micro_f1 vs champion   0.414016 vs floor 0.545840 (champion 0.553012 - tol 0.007172)
+  [FAIL] micro_f1 vs reference  0.414016 vs floor 0.549795 (reference 0.556967 - tol 0.007172)
+  [PASS] never-predicted tags   2 vs limit 2 (champion 1 + allowance 1)
+EXIT: 2
+temp root UNCHANGED after rejection
+```
+
+That third line is the documented limitation made visible rather than hidden:
+rule 3 **passes** the 1-epoch model, because an undertrained model fires more
+tags, not fewer. Rule 1 is what rejects it. Every check is reported on a pass as
+well as a failure, so what the gate did and did not catch is always legible.
+
+### The constants are reproducible from the committed tool
+
+The numbers in `mlops/promote.py` are not transcribed from a scratch script that
+no longer exists. `tools/calibrate_gate.py` is committed, and re-running it over
+the ten candidate directories reproduces them exactly:
+
+```
+$ python -m tools.calibrate_gate --seeds 1 2 3 4 5 6 7 8 9 10
+
+metric                      mean     sigma       min       max       gap  gap/sig
+micro_f1                0.553580  0.001793  0.550834  0.556315  0.005482     3.06
+macro_f1                0.350302  0.006553  0.338858  0.362552  0.023694     3.62
+macro_f1_supported      0.453592  0.005607  0.447350  0.465270  0.017920     3.20
+weighted_f1             0.532557  0.002804  0.526996  0.538154  0.011158     3.39
+
+never_predicted_supported across seeds: [1,1,1,1,1,1,2,1,2,1] (champion 1, sigma 0.42)
+  smallest allowance admitting every run: +1
+
+=== derived gate constants (micro_f1) ===
+  MICRO_F1_SIGMA           = 0.001793     <- matches mlops/promote.py
+  TOLERANCE_K              = 4
+  DEFAULT_TOLERANCE        = 0.007172     <- matches mlops/promote.py
+  NEVER_PREDICTED_ALLOWANCE= 1            <- matches mlops/promote.py
+  worst run 0.550834 vs champion floor 0.549795 -> accepted
+```
+
+A calibration whose script is lost is just a number someone once believed.
+
+### Honest limits
+
+- **The rare tags are largely unprotected.** Of the 17 tags below the support
+  floor, 11 are already never predicted by the champion. Rule 3 guards the 49
+  supported tags; it cannot protect tags the model had already abandoned.
+- **Rule 3 does not catch undertrained models.** The 1-epoch model has *fewer*
+  never-predicted tags than the champion (its `never_predicted_included` is 2,
+  within the allowance) because it fires indiscriminately above the threshold.
+  It is caught by rule 1, overwhelmingly. Rule 3 guards a different failure: a
+  model going selectively mute.
+- **Ten seeds is better than four, not definitive.** sigma is a consistent
+  estimator so it will not keep widening the way the max gap did, but it is
+  still estimated from 10 samples.
+
+---
+
 ## Caveats
 
 These qualify the numbers above. None of them are defects introduced by this
@@ -528,22 +894,6 @@ in place deliberately.
 3. **`songs/` contains 31 committed `.osu` files.** These predate this work. No
    further beatmap content was added — `samples/sample_features.csv` holds
    derived statistics and tag labels only.
-
----
-
-## Not verified
-
-One thing in this branch was **not** verified locally, stated here rather than
-implied to work:
-
-- **The Docker image build.** The Dockerfile now installs `requirements.txt`
-  and `requirements-mlops.txt` as two separate layers. Docker Desktop's daemon
-  was not running on this machine (`failed to connect to the docker API at
-  npipe:////./pipe/dockerDesktopLinuxEngine`), so the image was never built
-  here. What *was* checked is only static: both `COPY` sources exist and the
-  ignore rules are in place. CI builds the image on every push and runs the
-  `--help`, failure-exit and image-contents checks against it, so this is
-  covered there — but it has not been run locally.
 
 ---
 

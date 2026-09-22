@@ -195,33 +195,48 @@ repo's harness.
 `promote` refuses to let a regression through. It scores the candidate **and**
 the current champion on the same frozen holdout — re-scoring the champion rather
 than trusting its stored number, so a dataset that has moved cannot make the
-comparison lie — and then applies two conditions:
+comparison lie — and then applies three conditions:
 
 ```
-promote  iff  candidate >= champion  - tolerance
-         and  candidate >= best_ever - tolerance
+promote  iff  micro_f1 >= champion  - tolerance      (skipped if no champion)
+         and  micro_f1 >= reference - tolerance      (fixed anchor)
+         and  never-predicted tags (support >= 10) <= champion's + 1
 ```
 
-Both must hold. With no champion registered, the first model promotes
-unconditionally.
+All must hold. Note the fixed reference applies even on the very first
+promotion: an empty registry is not a licence to ship anything.
 
-The second condition is the one that is easy to leave out. A gate that only
-compares against the incumbent has a slow failure mode: each promotion resets
-the baseline, so a run of candidates each a hair worse than the last passes
-every individual check while quality slides. Ten promotions each 0.004 below
-their predecessor lose 0.04 macro F1 with the gate green the entire way. The
-best-ever floor is what stops that.
+**Micro F1, not macro.** Macro F1 weights all 66 tags equally, which sounds like
+the right way to stop a model abandoning rare tags — but on this holdout tag
+support ranges from 2 to 345, and macro F1 varies by 0.0237 (6.8% of the metric)
+across runs of the *identical* configuration. A tolerance honestly calibrated to
+that noise would permit a ~7% real regression, which is a formality rather than
+a gate. Micro F1 varies by ~1%, so a tolerance calibrated to it still bites.
 
-**The tolerance is measured, not chosen.** Training the identical configuration
-twice gives different macro F1 — weight init and batch shuffling differ — so a
-tolerance below that noise floor rejects honest reruns, and one far above it
-waves real regressions through. See VERIFIED.md for the three-seed calibration
-and the resulting number.
+Rule 3 is what replaces macro's rare-tag protection, and it targets the hole
+directly: the candidate may not go mute on more tags than the champion does.
+It is restricted to tags with support ≥ 10 because the count over all 66 swings
+11–16 between identical reruns, while the restricted count is a stable 1–2.
 
-Macro F1 is the gate metric because it weights all 66 tags equally regardless of
-support: a model that quietly abandons rare tags to improve on common ones
-should not pass. The per-tag CSV logged alongside it is what tells you *why* a
-number moved.
+**The tolerance is measured, not chosen** — `k × σ` where σ is the seed-to-seed
+standard deviation of micro F1 and `k = 4`. σ rather than the observed max gap,
+because the max gap is an order statistic that keeps widening as runs are added;
+σ converges. `k = 4` rather than 2 or 3 because the champion is itself a noisy
+draw sitting ~1.9σ above the mean, so covering an ordinary `mean − 2σ` candidate
+needs ≈3.9σ. See VERIFIED.md §11–12 for the 10-seed calibration, the validation
+showing all 10 honest reruns pass and the 1-epoch model fails, and the
+first-attempt gate that got this wrong.
+
+**The ratchet floor is a fixed reference, not best-ever.** Anchoring to the best
+score ever recorded looks stricter but is a trap: best-ever is the maximum of
+many noisy runs, so it is biased upward and only ever rises — the gate tightens
+on its own until it rejects ordinary reruns. Measured, an early macro-F1
+tolerance rejected 3 of 10 honest reruns against the real champion but 7 of 10
+once a best-ever floor was added. The reference is the v1 champion's score, so
+the rule reads: never ship a model meaningfully worse than what users already
+have.
+
+The per-tag CSV logged alongside each run is what tells you *why* a number moved.
 
 Two things the gate score is **not**:
 
