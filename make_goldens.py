@@ -1,5 +1,8 @@
 """Pick contrasting-style fixture maps and dump their golden Python feature vectors."""
-import json, os, shutil, sys
+import json
+import os
+import shutil
+import sys
 from neural_model import ImprovedBeatmapClassifier
 
 WANT = {

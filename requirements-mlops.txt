@@ -1,0 +1,14 @@
+# Experiment tracking, orchestration and drift reporting.
+#
+# Kept separate from requirements.txt so the Docker image installs it as its own
+# cached layer: this set is large (mlflow and prefect between them pull fastapi,
+# uvicorn, pyarrow, sqlalchemy) and changes on a different cadence to the
+# training dependencies above it.
+#
+# Upper bounds are deliberate. Evidently's report API changed shape at 0.7 and
+# mlflow's model-registry alias API at 3.x; a silent major bump would break the
+# gate rather than fail loudly at install time.
+mlflow>=3.0,<4
+prefect>=3.0,<4
+evidently>=0.7,<0.8
+pandas>=2.0

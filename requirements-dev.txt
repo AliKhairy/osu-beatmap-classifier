@@ -1,0 +1,4 @@
+# Test and lint tooling. Installed on the CI runner only - deliberately NOT in
+# the image, which has no reason to carry a test runner into production.
+pytest>=8,<10
+ruff>=0.6

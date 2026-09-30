@@ -25,7 +25,6 @@ import os
 import pickle
 # The neural_model module is required because the pickled object is an instance
 # of the ImprovedBeatmapClassifier class defined within it.
-from neural_model import ImprovedBeatmapClassifier
 
 
 def main():

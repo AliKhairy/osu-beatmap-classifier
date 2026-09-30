@@ -6,7 +6,7 @@ max-pooled 29-feature block, and report the separating features + example maps +
 "blindness" score (best |d| any feature achieves). Low blindness => current features
 cannot see the tag => that's what we need to add.
 """
-import json, sys
+import json
 import numpy as np
 from collections import defaultdict
 from neural_model import ImprovedBeatmapClassifier

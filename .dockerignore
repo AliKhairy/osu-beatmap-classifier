@@ -27,3 +27,27 @@ __pycache__/
 .git/
 .gitignore
 README.md
+
+# Local MLflow state. Critically, mlruns/ and mlflow.db can contain metrics and
+# artifacts from every run ever made locally - baking them into the image would
+# both bloat it and publish local experiment history. CI asserts these are
+# absent from the built image.
+mlruns/
+mlflow.db
+.prefect/
+
+# Candidates and caches: rebuilt inside the container when needed.
+candidates/
+.cache/
+drift_report.html
+drift_reports/
+
+# Split manifest is regenerated from the dataset; a stale one in the image would
+# describe a split the container cannot reproduce.
+split_manifest.json
+
+# Test and lint tooling stays on the CI runner.
+tests/
+pyproject.toml
+requirements-dev.txt
+VERIFIED.md

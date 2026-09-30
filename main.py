@@ -4,7 +4,6 @@ Main orchestrator for the osu! Beatmap Classifier.
 Handles dataset building, model training, predictions, and ensemble evaluation.
 """
 import os
-import pickle
 from dataset_builder import build_full_dataset, save_dataset
 from neural_model import ImprovedBeatmapClassifier
 from rebuild_from_downloaded import rebuild
@@ -41,7 +40,7 @@ def main():
         if choice == '1' or choice == '4':
             print("Loading existing model...")
             pass
-            
+
         elif choice == '2':
             # --- THE NEW ENSEMBLE HOOK ---
             print("\n" + "="*40)
@@ -49,26 +48,26 @@ def main():
             print("="*40)
             print("Warning: Training 5 distinct Neural Networks in sequence.")
             print("This will take approximately 5x longer than standard training.")
-            
+
             # Fire the ensemble script
             train_and_evaluate_ensemble(num_models=5)
-            
+
             print("\nEnsemble evaluation complete! Check the F1-Scores above.")
-            # Return instead of going to the prediction loop, since the ensemble 
+            # Return instead of going to the prediction loop, since the ensemble
             # models are kept in memory just for the evaluation report.
-            return 
-            
+            return
+
         elif choice == '3':
             print("Rebuilding dataset and model...")
             cleanup_files()
-            
+
             # Ask the user for a start offset.
             try:
                 offset_input = input("Enter start offset (or leave blank for 0): ")
                 start_offset = int(offset_input) if offset_input else 0
             except ValueError:
                 start_offset = 0
-            
+
             # Pass the offset to the build function. build_full_dataset only
             # RETURNS the dataset - saving it is the caller's job, and forgetting
             # that here used to throw away the whole scrape and then train on a
@@ -76,7 +75,7 @@ def main():
             new_data = build_full_dataset(max_maps=DATA_SET_SIZE, offset=start_offset)
             save_dataset(new_data)
             classifier.train()
-            
+
         elif choice == '4':
             classifier.test_multiple_maps(max_maps=10, threshold=0.25)
             return
@@ -93,7 +92,7 @@ def main():
             start_offset = int(offset_input) if offset_input else 0
         except ValueError:
             start_offset = 0
-            
+
         new_data = build_full_dataset(max_maps=DATA_SET_SIZE, offset=start_offset)
         save_dataset(new_data)
         rebuild()
@@ -104,10 +103,10 @@ def main():
 
 def prediction_loop(classifier):
     """Handles the interactive prediction menu."""
-    from ensemble_evaluator import load_ensemble_assets, predict_with_ensemble, test_multiple_maps_with_ensemble
-    
+    from ensemble_evaluator import test_multiple_maps_with_ensemble
+
     print("\n--- Prediction Mode ---")
-    
+
     # Check if ensemble is available on disk
     ensemble_available = os.path.exists('ensemble_model_1.keras')
     if ensemble_available:
@@ -129,7 +128,7 @@ def prediction_loop(classifier):
             try:
                 threshold = float(input("Enter prediction threshold (e.g., 0.27): ") or "0.27")
                 max_maps = int(input("Enter number of maps to test (e.g., 5): ") or "5")
-                
+
                 if ensemble_available:
                     test_multiple_maps_with_ensemble(max_maps=max_maps, threshold=threshold)
                 else:
@@ -169,12 +168,12 @@ def predict_single_map(classifier, ensemble_available):
             chosen_file = osu_files[int(choice) - 1]
         else:
             chosen_file = choice if choice.endswith('.osu') else choice + '.osu'
-        
+
         map_path = os.path.join(songs_folder, chosen_file)
 
         if os.path.exists(map_path):
             threshold = float(input("Enter prediction threshold (e.g., 0.27): ") or "0.27")
-            
+
             # --- DEFAULT TO ENSEMBLE ---
             if ensemble_available:
                 from ensemble_evaluator import load_ensemble_assets, predict_with_ensemble
@@ -182,7 +181,7 @@ def predict_single_map(classifier, ensemble_available):
                 predicted_tags = predict_with_ensemble(map_path, threshold, assets, classifier)
             else:
                 predicted_tags = classifier.predict_tags(map_path, threshold=threshold)
-                
+
             print(f"\nFinal prediction: {predicted_tags}")
         else:
             print(f"Error: File not found at '{map_path}'")

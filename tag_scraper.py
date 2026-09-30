@@ -103,12 +103,14 @@ def filter_tags(api_tags, all_tag_counts):
         # Rule 1: Immediately skip any tag that is in the exclusion list.
         if tag_name in manual_exclude:
             continue
-        
-        # Merge to get more data so that AI can predict linear aim more effectively, since linear stuff is often underrepresented.
+
+        # Merge to get more data so that AI can predict linear aim more
+        # effectively, since linear stuff is often underrepresented.
         if tag_name == "linear patterns":
             tag_name = "linear aim"
-        
-        # Same thing for geometric patterns, which are often underrepresented and can be confused with general "aim" tags.
+
+        # Same thing for geometric patterns, which are often underrepresented
+        # and can be confused with general "aim" tags.
         if tag_name == "star jumps" or tag_name == "triangle jumps":
             tag_name = "geometric"
 

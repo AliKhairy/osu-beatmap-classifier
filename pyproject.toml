@@ -1,0 +1,58 @@
+[tool.ruff]
+# Deliberately `ruff check` only. `ruff format` is NOT used anywhere in this
+# repo and must not be: neural_model.py's feature math is mirrored line-for-line
+# in the C# app's FeatureExtractor.cs, and a reformat would churn that file for
+# no behavioural gain while making the two sides harder to diff by eye.
+line-length = 120
+target-version = "py312"
+
+exclude = [
+    "venv",
+    "__pycache__",
+    ".cache",
+    "mlruns",
+    "candidates",
+    "backup_models_20260810",
+]
+
+[tool.ruff.lint]
+# A conservative set: real errors (E), undefined names and unused imports (F),
+# and whitespace warnings (W). Deliberately NOT enabling "I" (import sorting),
+# which would reorder imports across every file in the repo and bury the actual
+# changes in this branch under unrelated churn.
+select = ["E", "F", "W"]
+
+ignore = [
+    # Bare `except Exception` is used intentionally in a few places where the
+    # point is to report a failure per-file and keep going (drift extraction
+    # over a folder of maps). Those sites carry a comment saying so.
+    "E722",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The feature extractor is parity-critical and intentionally verbose: long
+# expressions there mirror the C# implementation's structure. E501 is relaxed
+# rather than rewrapping math that has a line-for-line counterpart elsewhere.
+"neural_model.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Quiet by default; -v when you actually want the list.
+addopts = "-q"
+
+# Put the repo root on sys.path so `from mlops.promote import ...` resolves.
+#
+# Without this, `python -m pytest` works and a bare `pytest` does NOT: the -m
+# form puts the current directory on sys.path, while the console script does
+# not, and pytest's default prepend import mode only adds tests/ (the first
+# directory without an __init__.py). CI runs the bare form, so the suite failed
+# there while passing locally - which is exactly the kind of "works on my
+# machine" gap CI exists to catch. Setting it here fixes both invocations
+# rather than making the CI command match a local habit.
+pythonpath = ["."]
+filterwarnings = [
+    # TensorFlow and its dependencies emit a steady stream of deprecation
+    # noise that has nothing to do with this codebase.
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
