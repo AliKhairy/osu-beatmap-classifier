@@ -12,7 +12,7 @@ CSV is logged next to it: the summary says whether to promote, the CSV says why.
 import numpy as np
 
 # Imported rather than repeated - a second copy of the threshold is a second
-# thing to forget. From labels.py, not ensemble_evaluator, so scoring does not
+# thing to forget. From labels.py, not the ensemble trainer, so scoring does not
 # have to import tensorflow just to learn a number.
 from mlops.labels import THRESHOLD, predicted
 
@@ -31,8 +31,8 @@ def evaluate_probabilities(y_true, probs, classes, threshold=THRESHOLD):
     """
     Score averaged ensemble probabilities against binary truth.
 
-    Scores RAW thresholded output. The predict path in ensemble_evaluator and
-    neural_model additionally applies an expert-system override that forces the
+    Scores RAW thresholded output. The predict path in osu_tagger.training.ensemble
+    and osu_tagger.features.v1 additionally applies an expert-system override that forces the
     'streams' tag on maps with a 15+ note sequence; that override is deliberately
     NOT applied here, matching the existing classification_report and keeping the
     gate measuring the network rather than the network plus a hand-written rule.

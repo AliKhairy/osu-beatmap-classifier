@@ -16,7 +16,7 @@ import os
 import numpy as np
 import pytest
 
-from features_v2 import (
+from osu_tagger.features.v2 import (
     DEATHSTREAM_MIN_NOTES,
     FEATURE_COUNT_V2,
     FEATURE_NAMES_V2,
@@ -80,7 +80,7 @@ class TestRhythmIsBpmRelative:
         these back-and-forth jumps a stream. v2 judges rhythm against the beat.
         """
         os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
-        from neural_model import ImprovedBeatmapClassifier
+        from osu_tagger.features.v1 import ImprovedBeatmapClassifier
         objs = back_and_forth(spacing=100)
         v1 = ImprovedBeatmapClassifier().extract_meaningful_features(objs)
         assert v1[2] >= 8, "v1's max_continuous_stream should show the old bug"
@@ -277,7 +277,7 @@ class TestTiming:
 
 class TestParser:
     def test_difficulty_and_timing_points(self, tmp_path):
-        from osu_parser import OsuFileParser
+        from osu_tagger.parsing import OsuFileParser
         osu = tmp_path / 'map.osu'
         osu.write_text(
             'osu file format v5\n\n[Difficulty]\nCircleSize:4.2\nOverallDifficulty:7\n'
@@ -302,7 +302,7 @@ class TestGoldenVectorV2:
     uses. It is the reference the C# port must reproduce. Regenerate only for a
     deliberate change to features_v2, with:
 
-        python parity_dump.py --feature-version 2 "<osu_file>" tests/golden_feature_vector_v2.json
+        python -m osu_tagger.parity.dump --feature-version 2 "<osu_file>" tests/golden_feature_vector_v2.json
     """
 
     def test_golden_vector_is_unchanged(self):

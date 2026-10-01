@@ -1,4 +1,4 @@
-# osu_parser.py
+# osu_tagger/parsing.py (was osu_parser.py)
 """
 This module provides a simple and efficient parser for osu! beatmap files (.osu).
 The OsuFileParser class can read a .osu file, extract its metadata, and convert

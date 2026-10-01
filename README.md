@@ -9,7 +9,7 @@ This tool can be used to automatically tag a library of beatmaps, assist mappers
 ## Features
 
 -   **Data Collection**: Builds a dataset by downloading beatmap info and tags from the Echo API.
--   **Advanced Feature Extraction**: Analyzes hit object data to extract 90 meaningful geometric features, including stream purity, finger control metrics, and global snap variance.
+-   **Feature Extraction**: Turns hit objects, difficulty settings and timing points into a feature vector: v1 (90 features, what the shipped app has computed so far) or v2 (72 features built against each tag's definition; see [v2 features](#v2-features)).
 -   **Deep Learning Architecture**: Uses a TensorFlow/Keras Dense Neural Network to classify beatmaps into multiple overlapping tag categories.
 -   **5-Model Ensemble Learning**: Features a robust voting classifier that trains 5 distinct neural networks simultaneously, reducing variance and correcting single-model bias on subjective tags.
 -   **Deterministic Feature Injection**: Hard-coded mechanical rules (e.g., forcing the "streams" tag if a 15+ note sequence is detected) to prevent the black-box AI from missing absolute geometric truths.
@@ -17,12 +17,12 @@ This tool can be used to automatically tag a library of beatmaps, assist mappers
 
 ## How It Works
 
-The project follows a standard, modular machine learning pipeline:
-1.  **Dataset Construction** (`dataset_builder.py`, `rebuild_from_downloaded.py`): Beatmap IDs and tags are fetched from the Echo API. The corresponding `.osu` files are downloaded.
-2.  **Parsing & Feature Extraction** (`osu_parser.py`, `neural_model.py`): The `.osu` files are parsed to extract raw coordinates. This is transformed into a high-dimensional feature vector representing micro-patterns and spatial flow.
-3.  **Model Training** (`neural_model.py`): The feature vectors train a multi-label classification neural network. The trained baseline model is saved to `beatmap_classifier.pkl`.
-4.  **Ensemble Evaluation** (`ensemble_evaluator.py`): Trains 5 independent models (`ensemble_model_1.keras` to `5`) and aggregates their probabilities to drastically improve F1-Scores on minority tags.
-5.  **Prediction** (`main.py`, `predict_for_overlay.py`): Predicts tags for any new `.osu` file, automatically prioritizing the 5-model ensemble if it detects one on disk.
+The library is the `osu_tagger` package; the pipeline runs through it in order:
+1.  **Dataset Construction** (`osu_tagger/data/`): beatmap IDs and tags come from the Echo API, `.osu` files from the osu! API, and `map_meta.json` adds each map's difficulty and timing points.
+2.  **Parsing & Feature Extraction** (`osu_tagger/parsing.py`, `osu_tagger/features/`): `.osu` files are parsed into hit objects, difficulty and timing points, then turned into the v1 or v2 feature vector.
+3.  **Model Training** (`osu_tagger/training/ensemble.py`): trains 5 independent models (`ensemble_model_1.keras` to `5`) and averages their probabilities. A legacy single model (`beatmap_classifier.pkl`) can still be trained with `cli.py train`.
+4.  **Gating** (`mlops/`): a candidate is scored on a frozen holdout and only replaces the current model if it holds up.
+5.  **Export** (`osu_tagger/export/`): the ensemble becomes the 5 `.onnx` files and `model_config.json` the desktop app loads.
 
 ## Setup and Installation
 
@@ -59,7 +59,7 @@ You need an API token from `echosu.com`.
 
 **5. Prepare Beatmap Folders:**
 The application uses two folders for `.osu` files:
--   `downloads/`: Used by `rebuild_from_downloaded.py` to process local maps.
+-   `downloads/`: Used by `cli.py rebuild` and `cli.py enrich-dataset` to process local maps.
 -   `songs/`: Used by the interactive prediction menu in `main.py` to find maps for testing.
 
 Create these folders if they don't exist and place some `.osu` files inside them.
@@ -84,10 +84,10 @@ The desktop app (**OsuScoutNew**) does not run Python or Keras. It runs inferenc
 on-device using ONNX Runtime. Training produces Keras/scikit-learn artifacts; two
 scripts convert those into the exact files the app consumes:
 
-| Training artifact                     | Export script         | App file (`OsuScoutNew/Assets/`) |
-| ------------------------------------- | --------------------- | -------------------------------- |
-| `ensemble_model_1..5.keras`           | `export_to_onnx.py`   | `ensemble_model_1..5.onnx`       |
-| `ensemble_scaler.pkl` + `..._binarizer.pkl` | `extract_config.py` | `model_config.json`              |
+| Training artifact                     | Export module                | App file (`OsuScoutNew/Assets/`) |
+| ------------------------------------- | ---------------------------- | -------------------------------- |
+| `ensemble_model_1..5.keras`           | `osu_tagger/export/onnx.py`  | `ensemble_model_1..5.onnx`       |
+| `ensemble_scaler.pkl` + `..._binarizer.pkl` | `osu_tagger/export/config.py` | `model_config.json`        |
 
 **To regenerate the model files after (re)training:**
 ```bash
@@ -101,9 +101,9 @@ constants and tag list, so it **must** come from the same training run as the
 `.onnx` files — a config from a different run standardises the features with the
 wrong numbers and corrupts every prediction without raising an error. When these
 were two scripts you had to remember to run, forgetting the second one was a
-silent failure. The individual scripts still work standalone
-(`python export_to_onnx.py`, `python extract_config.py`) and both now accept a
-model directory, so a candidate can be exported without being promoted first.
+silent failure. The two halves still run standalone
+(`python -m osu_tagger.export.onnx`, `python -m osu_tagger.export.config`) and both
+accept a model directory, so a candidate can be exported without being promoted first.
 
 ## Shipping a Model Update to the App
 
@@ -124,12 +124,13 @@ new model is the same as shipping any app update:
 Steps 1–3 are also available as a single Prefect flow (`python cli.py pipeline`),
 in which a rejected candidate never reaches the export step.
 
-> **Feature count must stay in sync.** The C# `FeatureExtractor` computes the input
-> vector (currently 90 features) and `OsuClassifier` validates that exact length. If
-> you change the **number or order of features** in `neural_model.py`, you must make
-> the **identical** change in the app's `FeatureExtractor.cs` and retrain. Adding new
-> **tags** (without changing feature count) needs no C# change — the tag list is read
-> from `model_config.json` at runtime.
+> **Features must stay in sync.** The app computes the input vector itself:
+> `FeatureExtractor.cs` mirrors `osu_tagger/features/v1.py` and `FeatureExtractorV2.cs`
+> mirrors `osu_tagger/features/v2.py`; `model_config.json`'s `feature_version` says
+> which one runs. If you change the **math, number or order of features**, make the
+> **identical** change in the app, regenerate the goldens and run the parity harness
+> (`OsuScoutNew/parity`). Adding or changing **tags**, the threshold or the redundancy
+> rules needs no C# change: they are all read from `model_config.json` at runtime.
 
 ## Tracked and Gated Model Quality
 
@@ -170,6 +171,18 @@ flowchart TD
 ### Where the code lives
 
 ```
+cli.py           the command-line entry point (and the Docker ENTRYPOINT)
+main.py          the interactive menu
+neural_model.py  shim so the legacy beatmap_classifier.pkl still loads
+osu_tagger/      parsing.py         .osu files: hit objects, difficulty, timing points
+                 features/v1.py     the 90-feature vector the shipped app computes
+                 features/v2.py     the 72-feature v2 vector
+                 data/              echosu.py, osu_api.py, tags.py (tag sources),
+                                    builder.py, rebuild.py (the dataset),
+                                    map_meta.py (the difficulty/timing sidecar)
+                 training/ensemble.py  the 5-model ensemble
+                 export/            onnx.py, config.py: the app's 6 model files
+                 parity/            dump.py, goldens.py: references for the C# port
 mlops/           split.py        the frozen evaluation split, and data prep
                  labels.py       the label policy (which tags are trained)
                  scoring.py      loading an ensemble and scoring it
@@ -182,22 +195,21 @@ flows/           pipeline.py     the Prefect flow
 tools/           calibrate_gate.py  measuring the gate's noise and tolerance
                  feature_probe.py   comparing feature sets on a dev split
                  tag_quality.py     per-tag precision/recall/AUC side by side
+                 map_probabilities.py  every tag's probability per map (cli: tag-probabilities)
+                 compare_on_maps.py    two models' tags side by side on a folder
 tests/           test_features.py     v1 extractor + golden-vector regression
                  test_features_v2.py  v2 extractor, one test per v1 flaw
                  test_labels.py       label policy + scoring across label spaces
                  test_gate.py         the gate
 samples/         sample_features.csv
-features_v2.py   the v2 feature vector (see "v2 features" below)
-map_meta.py      the difficulty/timing sidecar v2 reads
 docs/            feature_v2_spec.md  the C# port spec for v2
 ```
 
-`neural_model.py`, `cli.py`, `osu_parser.py`, `parity_dump.py` and
-`make_goldens.py` stay at the repo root on purpose. `beatmap_classifier.pkl`
-pickles an `ImprovedBeatmapClassifier` *instance*, and pickle records the module
-path — moving `neural_model.py` would make that file unloadable at runtime. The
-Dockerfile entrypoint is `cli.py`, and the parity scripts are invoked by the app
-repo's harness.
+Only three files sit at the root, each for a reason. `cli.py` is the Dockerfile
+entrypoint, and `main.py` is the interactive menu. `neural_model.py` is a two-line
+shim: `beatmap_classifier.pkl` pickles an `ImprovedBeatmapClassifier` *instance*,
+and pickle records the module path, so without a module of that name the file
+fails to load at runtime. The code itself lives in `osu_tagger/features/v1.py`.
 
 ### What the gate does
 
@@ -386,7 +398,7 @@ wrong maps:
   leaves it (36% of moves), spinners count as notes at screen centre, and
   circle size and timing points are never read.
 
-`features_v2.py` rebuilds the vector (72 features) against each tag's
+`osu_tagger/features/v2.py` rebuilds the vector (72 features) against each tag's
 definition, using echosu's own wording where there is one. Rhythm is judged
 against the beat, spacing is in circle radii, moves start at slider ends, and
 spinners are dropped. v1 stays byte-for-byte unchanged because the app computes
@@ -422,9 +434,10 @@ one. The spec is `docs/feature_v2_spec.md`.
 **The v2 golden** (`tests/golden_feature_vector_v2.json`) is the exact 72 numbers
 v2 produces for one committed map, `songs/Polyphia - Playing God (Mir) [Nirvana].osu`.
 The test suite pins it, so any change to the v2 maths fails a test, and the C#
-port is checked against the same numbers. `make_goldens.py --feature-version 2`
-writes the same kind of golden for the app's three parity fixtures, and
-`parity_dump.py --feature-version 2` dumps any map.
+port is checked against the same numbers. `python -m osu_tagger.parity.goldens
+<dir> --feature-version 2` writes the same kind of golden for the app's three
+parity fixtures, and `python -m osu_tagger.parity.dump --feature-version 2 <map>`
+dumps any map.
 
 ```bash
 # See the difference map by map, on maps you know

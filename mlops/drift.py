@@ -31,8 +31,8 @@ def features_from_folder(folder, max_maps=None):
     a clean report over three maps.
     """
     os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
-    from neural_model import ImprovedBeatmapClassifier
-    from osu_parser import OsuFileParser
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
+    from osu_tagger.parsing import OsuFileParser
 
     if not os.path.isdir(folder):
         raise NotADirectoryError("Not a folder: %s" % folder)
@@ -82,7 +82,7 @@ def build_report(reference_X, current_X, out_path=REPORT_NAME):
     from evidently import Dataset, DataDefinition, Report
     from evidently.presets import DataDriftPreset
 
-    from neural_model import FEATURE_NAMES
+    from osu_tagger.features.v1 import FEATURE_NAMES
 
     ref_df = pd.DataFrame(reference_X, columns=FEATURE_NAMES)
     cur_df = pd.DataFrame(current_X, columns=FEATURE_NAMES)

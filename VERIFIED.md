@@ -1295,6 +1295,40 @@ The results:
 
 ---
 
+## 17. The package layout
+
+Added 2026-10-01. Library code moved into an `osu_tagger/` package. Sections
+above name files by their old paths; this is the map:
+
+| Was | Now |
+|---|---|
+| `osu_parser.py` | `osu_tagger/parsing.py` |
+| `neural_model.py` | `osu_tagger/features/v1.py`, plus a root `neural_model.py` shim so the legacy pickle loads |
+| `features_v2.py` | `osu_tagger/features/v2.py` |
+| `echosu_api.py`, `tag_scraper.py`, `dataset_builder.py`, `rebuild_from_downloaded.py`, `map_meta.py` | `osu_tagger/data/` (`echosu`, `tags`, `builder`, `rebuild`, `map_meta`) |
+| `complete_pipeline.py` | `osu_tagger/data/osu_api.py`: only the osu! API login and download, which build-dataset uses |
+| `ensemble_evaluator.py` | `osu_tagger/training/ensemble.py` |
+| `export_to_onnx.py`, `extract_config.py` | `osu_tagger/export/onnx.py`, `osu_tagger/export/config.py` |
+| `parity_dump.py`, `make_goldens.py` | `python -m osu_tagger.parity.dump`, `python -m osu_tagger.parity.goldens` |
+
+**Removed:**
+- `retrain_model.py` (legacy single-model corrections loop);
+- `tag_fingerprint.py` (one-off analysis);
+- `predict_for_overlay.py` (only the retired OsuScout app called it);
+- the single-map demo in `complete_pipeline.py`, which called an Echo API
+  method that no longer exists.
+
+**Verified after the move:**
+- `git mv`, so history follows each file.
+- All 109 tests pass and ruff is clean.
+- All 27 modules import, every `cli.py` subcommand's `--help` runs, and the
+  legacy `beatmap_classifier.pkl` still loads through the shim.
+- `python -m osu_tagger.parity.dump --feature-version 2` reproduces the v2
+  golden exactly (max diff 0.0).
+- `cli.py evaluate --holdout` scores the promoted v2 model end to end.
+
+---
+
 ## Caveats
 
 These qualify the numbers above. None of them are defects introduced by this

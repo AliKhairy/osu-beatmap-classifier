@@ -4,12 +4,12 @@ Main orchestrator for the osu! Beatmap Classifier.
 Handles dataset building, model training, predictions, and ensemble evaluation.
 """
 import os
-from dataset_builder import build_full_dataset, save_dataset
-from neural_model import ImprovedBeatmapClassifier
-from rebuild_from_downloaded import rebuild
+from osu_tagger.data.builder import build_full_dataset, save_dataset
+from osu_tagger.features.v1 import ImprovedBeatmapClassifier
+from osu_tagger.data.rebuild import rebuild
 
 # NEW IMPORT: Pull in the ensemble script we just wrote
-from ensemble_evaluator import train_and_evaluate_ensemble
+from osu_tagger.training.ensemble import train_and_evaluate_ensemble
 from mlops.labels import THRESHOLD
 
 # The number of maps to attempt to download when building a new dataset.
@@ -104,7 +104,7 @@ def main():
 
 def prediction_loop(classifier):
     """Handles the interactive prediction menu."""
-    from ensemble_evaluator import test_multiple_maps_with_ensemble
+    from osu_tagger.training.ensemble import test_multiple_maps_with_ensemble
 
     print("\n--- Prediction Mode ---")
 
@@ -177,7 +177,7 @@ def predict_single_map(classifier, ensemble_available):
 
             # --- DEFAULT TO ENSEMBLE ---
             if ensemble_available:
-                from ensemble_evaluator import load_ensemble_assets, predict_with_ensemble
+                from osu_tagger.training.ensemble import load_ensemble_assets, predict_with_ensemble
                 assets = load_ensemble_assets()
                 predicted_tags = predict_with_ensemble(map_path, threshold, assets, classifier)
             else:

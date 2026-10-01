@@ -89,7 +89,7 @@ def main():
         from mlops.labels import THRESHOLD
         args.threshold = THRESHOLD
 
-    from ensemble_evaluator import train_and_evaluate_ensemble
+    from osu_tagger.training.ensemble import train_and_evaluate_ensemble
     from mlops import split as split_mod
     from mlops.metrics_report import SUPPORT_FLOOR
 

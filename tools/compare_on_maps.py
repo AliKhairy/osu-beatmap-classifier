@@ -25,7 +25,7 @@ from mlops.labels import THRESHOLD, predicted, suppress_redundant  # noqa: E402
 
 
 def _features(path, version, classifier):
-    from osu_parser import OsuFileParser
+    from osu_tagger.parsing import OsuFileParser
 
     parser = OsuFileParser(path)
     parser.read_file()
@@ -34,7 +34,7 @@ def _features(path, version, classifier):
     if not sections:
         return None, parser
     if version == 2:
-        from features_v2 import extract_features_v2
+        from osu_tagger.features.v2 import extract_features_v2
         return extract_features_v2(hit_objects, parser.get_difficulty(),
                                    parser.get_timing_points()), parser
     return classifier._aggregate_features_for_map(sections), parser
@@ -66,7 +66,7 @@ def main():
     from mlops.labels import apply_label_policy
     from mlops.scoring import ensemble_probabilities, load_ensemble
     from mlops.split import model_feature_version
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     classifier = ImprovedBeatmapClassifier()
     models = []

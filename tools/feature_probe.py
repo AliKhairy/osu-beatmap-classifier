@@ -6,7 +6,7 @@ at the frozen 929-map holdout spends it: features tuned until the holdout
 likes them make the gate's final comparison optimistic, and nothing would show
 it. So this carves a fixed DEV split out of the training rows only (the
 holdout rows are never loaded into it), trains single ensemble members with
-the exact shipped architecture (ensemble_evaluator.train_member), and reports
+the exact shipped architecture (osu_tagger.training.ensemble.train_member), and reports
 per-tag quality with tools/tag_quality.
 
     python -m tools.feature_probe --sets v1 v2 --seeds 1 2 3
@@ -41,7 +41,7 @@ DEV_SIZE = 0.2
 
 def _columns(spec):
     """[(feature version, column indices or None for all)] making up a set."""
-    from features_v2 import FEATURE_GROUPS_V2, FEATURE_NAMES_V2
+    from osu_tagger.features.v2 import FEATURE_GROUPS_V2, FEATURE_NAMES_V2
 
     if spec in ('v1', 'v2'):
         return [(int(spec[1]), None)]
@@ -109,7 +109,7 @@ def run(args):
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import StandardScaler
 
-    from ensemble_evaluator import train_member
+    from osu_tagger.training.ensemble import train_member
     from mlops import split as split_mod
     from tools.tag_quality import evaluate_arm, format_report
 

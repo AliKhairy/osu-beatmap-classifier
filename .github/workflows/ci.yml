@@ -157,7 +157,7 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      # The feature tests import neural_model, which imports tensorflow at
+      # The feature tests import osu_tagger.features.v1, which imports tensorflow at
       # module level, so the full training requirements are needed here. That
       # costs a couple of minutes on a cold cache. The alternative - splitting
       # the feature math out of the TF-importing module - would mean refactoring

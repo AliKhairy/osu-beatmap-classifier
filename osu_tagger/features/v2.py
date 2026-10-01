@@ -1,8 +1,8 @@
-# features_v2.py
+# osu_tagger/features/v2.py (was features_v2.py)
 """
 The v2 map feature vector.
 
-v1 (neural_model.extract_meaningful_features) stays exactly as it is, because the
+v1 (osu_tagger.features.v1, extract_meaningful_features) stays exactly as it is, because the
 shipped desktop app computes it in FeatureExtractor.cs and the current models
 were trained on it. v2 exists because measuring v1 against the tags showed it
 cannot see several of the patterns the tags name, and mislabels others:
@@ -659,7 +659,7 @@ def extract_features_v2(hit_objects, difficulty=None, timing_points=None):
 
 def extract_features_v2_from_osu(osu_path):
     """Parse one .osu file and return its v2 vector (None if unreadable)."""
-    from osu_parser import OsuFileParser
+    from osu_tagger.parsing import OsuFileParser
 
     parser = OsuFileParser(osu_path)
     if not parser.read_file():

@@ -1,4 +1,4 @@
-# map_meta.py
+# osu_tagger/data/map_meta.py
 """
 The per-map metadata sidecar that v2 features need and ml_dataset.json lacks.
 
@@ -16,14 +16,14 @@ exactly as they are.
 import json
 import os
 
-from osu_parser import OsuFileParser
+from osu_tagger.parsing import OsuFileParser
 
 META_PATH = 'map_meta.json'
 DOWNLOADS_DIR = 'downloads'
 
 
 def osu_path_for(beatmap_id, downloads_dir=DOWNLOADS_DIR):
-    """Where complete_pipeline.get_beatmap_file saved this map."""
+    """Where osu_api.get_beatmap_file saved this map."""
     return os.path.join(downloads_dir, 'downloaded_%s.osu' % beatmap_id)
 
 

@@ -1,7 +1,7 @@
 # v2 feature vector: port spec for `FeatureExtractor.cs`
 
 This is what the OsuScoutNew app has to compute before it can run a v2 model.
-`features_v2.py` is the normative source and this document explains it. Where
+`osu_tagger/features/v2.py` is the normative source and this document explains it. Where
 the two disagree, the code wins, and the goldens decide.
 
 **Status: ported.** `OsuScoutNew/FeatureExtractorV2.cs` (branch `feat/v2-features`
@@ -52,13 +52,13 @@ The parser also needs `[Difficulty]` and `[TimingPoints]`, which v1 never read.
 
 - **Golden vector:** `tests/golden_feature_vector_v2.json`, for
   `songs/Polyphia - Playing God (Mir) [Nirvana].osu`, carrying `feature_names`.
-- **Three more fixtures:** `python make_goldens.py <dir> --feature-version 2`
+- **Three more fixtures:** `python -m osu_tagger.parity.goldens <dir> --feature-version 2`
   writes `<style>.python.v2.json` for the stream, jump and tech maps the v1
   parity harness already uses.
-- **Any map:** `python parity_dump.py --feature-version 2 <map.osu> out.json`.
+- **Any map:** `python -m osu_tagger.parity.dump --feature-version 2 <map.osu> out.json`.
 - **Target:** agreement to 1e-9, the same bar as v1.
 
-## Parsing (mirror `osu_parser.py`)
+## Parsing (mirror `osu_tagger/parsing.py`)
 
 **Hit objects.** Use the same rules as v1's parser:
 - `x, y, time, type` are parsed as **int**.

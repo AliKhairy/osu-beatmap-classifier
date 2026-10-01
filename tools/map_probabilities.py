@@ -51,7 +51,7 @@ def run(args):
     from mlops.labels import canonical, project_probabilities
     from mlops.scoring import ensemble_probabilities, load_ensemble
     from mlops.split import MANIFEST_PATH, model_feature_version
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
     from mlops.scoring import count_models
     from tools.compare_on_maps import _community_tags, _features
 

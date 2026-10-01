@@ -2,7 +2,7 @@
 The single source of truth for turning a dataset into a train/holdout split.
 
 Why this file exists: the evaluation set used to be an implementation detail
-buried in ensemble_evaluator.py - a `train_test_split(..., random_state=42)`
+buried in the ensemble trainer - a `train_test_split(..., random_state=42)`
 whose result nothing recorded. That is reproducible only as long as nobody
 notices, because the split is POSITIONAL: it selects rows out of whatever order
 the dataset happened to be in. Rebuild ml_dataset.json, or reorder it, and the
@@ -35,7 +35,7 @@ import numpy as np
 from mlops.labels import apply_label_policy
 
 # The seed that defines the evaluation set. This is frozen. It is NOT a tuning
-# knob, and it is NOT the training seed - see train_seed in ensemble_evaluator,
+# knob, and it is NOT the training seed - see train_seed in osu_tagger.training.ensemble,
 # which varies weight init while this stays put. Changing this value invalidates
 # every metric already in the registry, because they would no longer describe
 # the same holdout.
@@ -83,10 +83,10 @@ def _extract_from_json(path):
     Re-implements exactly the loop in train_and_evaluate_ensemble: keep samples
     that have both tags and hit_objects, split into sections, aggregate. The
     filter conditions matter - `tags and hit_objects` here vs `tags` alone in
-    neural_model.train() is why those two produce different row counts.
+    features.v1 ImprovedBeatmapClassifier.train() is why those two produce different row counts.
     """
     os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     classifier = ImprovedBeatmapClassifier()
     with open(path, 'r', encoding='utf-8') as f:
@@ -120,9 +120,9 @@ def _extract_from_json_v2(path, meta_path):
     missing from it falls back to the defaults in features_v2.
     """
     os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
-    from features_v2 import extract_features_v2
-    from map_meta import load_map_meta
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v2 import extract_features_v2
+    from osu_tagger.data.map_meta import load_map_meta
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     classifier = ImprovedBeatmapClassifier()
     meta = load_map_meta(meta_path)
@@ -176,10 +176,10 @@ def model_feature_version(model_dir):
 def feature_names_for(version):
     """Column names of the vector each feature version produces."""
     if version == 1:
-        from neural_model import FEATURE_NAMES
+        from osu_tagger.features.v1 import FEATURE_NAMES
         return list(FEATURE_NAMES)
     if version == 2:
-        from features_v2 import FEATURE_NAMES_V2
+        from osu_tagger.features.v2 import FEATURE_NAMES_V2
         return list(FEATURE_NAMES_V2)
     raise ValueError("Unknown feature version %r (known: 1, 2)" % version)
 
@@ -218,7 +218,7 @@ def prepare_dataset(path='ml_dataset.json', use_cache=True, cache_dir=CACHE_DIR,
     silently reuse stale features.
 
     feature_version picks the extractor: 1 is the shipped 90-feature vector
-    (neural_model), 2 is features_v2. v2 also reads the map_meta.json sidecar
+    (osu_tagger.features.v1), 2 is osu_tagger.features.v2. v2 also reads the map_meta.json sidecar
     (meta_path), whose hash joins the cache key for the same reason.
     """
     from sklearn.preprocessing import MultiLabelBinarizer
@@ -230,16 +230,16 @@ def prepare_dataset(path='ml_dataset.json', use_cache=True, cache_dir=CACHE_DIR,
     if feature_version == 1:
         cache_path = os.path.join(cache_dir, 'features_%s.npz' % sha[:16])
     elif feature_version == 2:
-        from map_meta import META_PATH
+        from osu_tagger.data.map_meta import META_PATH
         meta_path = meta_path or META_PATH
         if not path.lower().endswith('.csv') and not os.path.exists(meta_path):
             raise FileNotFoundError(
                 "v2 features need %s. Run `python cli.py enrich-dataset` first." % meta_path)
         meta_sha = dataset_sha256(meta_path) if os.path.exists(meta_path) else 'none'
         # v2 is still being developed, so its own source joins the key: an edit
-        # to features_v2.py must never be answered with features cached from the
+        # to features/v2.py must never be answered with features cached from the
         # previous version of it. (v1 is frozen, so its key never needed this.)
-        import features_v2
+        import osu_tagger.features.v2 as features_v2
         code_sha = dataset_sha256(features_v2.__file__)
         cache_path = os.path.join(
             cache_dir, 'features_v2_%s_%s_%s.npz' % (sha[:16], meta_sha[:8], code_sha[:8]))

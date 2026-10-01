@@ -1,4 +1,4 @@
-# dataset_builder.py (Final Version with Offset)
+# osu_tagger/data/builder.py (was dataset_builder.py)
 """
 This script constructs a dataset by fetching the entire list of beatmaps
 from the echosu.com API and processing a specific slice of that list.
@@ -8,10 +8,10 @@ import os
 import json
 from dotenv import load_dotenv
 
-from complete_pipeline import get_oauth_token, get_beatmap_file
-from echosu_api import EchoOsuAPI
-from osu_parser import OsuFileParser
-from tag_scraper import filter_tags, tag_counts
+from osu_tagger.data.osu_api import get_oauth_token, get_beatmap_file
+from osu_tagger.data.echosu import EchoOsuAPI
+from osu_tagger.parsing import OsuFileParser
+from osu_tagger.data.tags import filter_tags, tag_counts
 
 load_dotenv()
 ECHO_API_TOKEN = os.getenv("ECHO_API_TOKEN")

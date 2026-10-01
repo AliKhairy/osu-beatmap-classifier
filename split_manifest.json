@@ -4,8 +4,8 @@
   "dataset_path": "ml_dataset.json",
   "dataset_sha256": "a88572be06c657b0ce4a814d7b60d31340af70e45dcb9e87899474b515a27ef6",
   "n_rows": 4643,
-  "n_features": 90,
-  "n_labels": 66,
+  "n_features": 72,
+  "n_labels": 58,
   "n_holdout": 929,
   "holdout_id_sha256": "1da06c95cc6655a63688b0e60ee3061135d9cf80eadfa602be1717e44c0060e4",
   "holdout_beatmap_ids": [

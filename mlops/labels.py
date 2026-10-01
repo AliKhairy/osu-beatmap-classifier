@@ -15,7 +15,7 @@ So the policy has two parts, applied in this order:
   DROPPED_TAGS   not a skill -> removed from the label space
 
 It is applied in exactly two places, which is the point of it living here:
-tag_scraper.filter_tags (so future scrapes and rebuilds come out clean) and
+osu_tagger.data.tags.filter_tags (so future scrapes and rebuilds come out clean) and
 split.prepare_dataset (so the dataset already on disk is trained and scored
 under the same policy without being rebuilt). A map whose only tags are dropped
 keeps its row with no labels, so the positional evaluation split - and with it
@@ -52,7 +52,7 @@ MERGED_TAGS = {
     'alt': 'alternating',
     'snap': 'snap aim',
     'flow': 'flow aim',
-    # Scrape-time merges that used to be hard-coded in tag_scraper.filter_tags,
+    # Scrape-time merges that used to be hard-coded in osu_tagger.data.tags.filter_tags,
     # made to boost two under-represented tags.
     'linear patterns': 'linear aim',
     'star jumps': 'geometric',

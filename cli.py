@@ -41,7 +41,7 @@ from mlops.labels import THRESHOLD  # noqa: E402
 
 def cmd_build_dataset(args):
     """Scrape map metadata + .osu files from the APIs and write ml_dataset.json."""
-    from dataset_builder import build_full_dataset, save_dataset
+    from osu_tagger.data.builder import build_full_dataset, save_dataset
 
     print(f"Building dataset: {args.max_maps} maps starting at offset {args.offset}")
     data = build_full_dataset(max_maps=args.max_maps, offset=args.offset)
@@ -57,7 +57,7 @@ def cmd_build_dataset(args):
 
 def cmd_rebuild(args):
     """Re-parse the already-downloaded .osu files in downloads/ into a dataset."""
-    from rebuild_from_downloaded import rebuild
+    from osu_tagger.data.rebuild import rebuild
 
     # rebuild() used to return None whatever happened - missing token, empty
     # downloads/, nothing matched - and this returned 0 regardless. A scripted
@@ -72,7 +72,7 @@ def cmd_rebuild(args):
 
 def cmd_enrich_dataset(args):
     """Parse difficulty + timing points from downloads/ into map_meta.json (no network)."""
-    from map_meta import build_map_meta
+    from osu_tagger.data.map_meta import build_map_meta
 
     if not os.path.exists(args.dataset):
         print(f"Dataset not found: {args.dataset}.")
@@ -98,7 +98,7 @@ def cmd_enrich_dataset(args):
 
 def cmd_train(args):
     """Train the single model and save beatmap_classifier.pkl."""
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     if not os.path.exists(args.dataset):
         print(f"Dataset not found: {args.dataset}. Run build-dataset or rebuild first.")
@@ -110,7 +110,7 @@ def cmd_train(args):
 
 def cmd_train_ensemble(args):
     """Train the N-model ensemble that the shipped ONNX files come from."""
-    from ensemble_evaluator import train_and_evaluate_ensemble
+    from osu_tagger.training.ensemble import train_and_evaluate_ensemble
 
     if not os.path.exists(args.dataset):
         print(f"Dataset not found: {args.dataset}. Run build-dataset or rebuild first.")
@@ -138,8 +138,8 @@ def cmd_train_ensemble(args):
 
 def cmd_export_onnx(args):
     """Convert the trained .keras models to the .onnx files the WPF app loads."""
-    from export_to_onnx import convert_models
-    from extract_config import extract_config
+    from osu_tagger.export.onnx import convert_models
+    from osu_tagger.export.config import extract_config
 
     model_dir = args.model_dir
     out_dir = args.out_dir or model_dir
@@ -191,7 +191,7 @@ def cmd_export_onnx(args):
 
 def cmd_predict(args):
     """Predict tags for one .osu file and print them."""
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     if not os.path.exists(args.map):
         print(f"Map not found: {args.map}")
@@ -200,7 +200,7 @@ def cmd_predict(args):
     classifier = ImprovedBeatmapClassifier()
 
     if os.path.exists('ensemble_model_1.keras'):
-        from ensemble_evaluator import load_ensemble_assets, predict_with_ensemble
+        from osu_tagger.training.ensemble import load_ensemble_assets, predict_with_ensemble
         assets = load_ensemble_assets()
         tags = predict_with_ensemble(args.map, args.threshold, assets, classifier)
     else:
@@ -212,7 +212,7 @@ def cmd_predict(args):
 
 def cmd_evaluate(args):
     """Run predictions over a folder of maps - the closest thing to a test."""
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     # --holdout is the measured path: score a model on the fixed evaluation
     # split and record the numbers. Without it this command behaves exactly as
@@ -227,7 +227,7 @@ def cmd_evaluate(args):
         return 1
 
     if os.path.exists('ensemble_model_1.keras'):
-        from ensemble_evaluator import test_multiple_maps_with_ensemble
+        from osu_tagger.training.ensemble import test_multiple_maps_with_ensemble
         test_multiple_maps_with_ensemble(max_maps=args.max_maps, threshold=args.threshold)
     else:
         ImprovedBeatmapClassifier().test_multiple_maps(

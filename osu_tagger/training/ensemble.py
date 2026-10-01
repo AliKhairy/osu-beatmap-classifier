@@ -4,11 +4,11 @@ import numpy as np
 import tensorflow as tf
 from sklearn.metrics import classification_report
 
-from neural_model import ImprovedBeatmapClassifier
-from osu_parser import OsuFileParser
+from osu_tagger.features.v1 import ImprovedBeatmapClassifier
+from osu_tagger.parsing import OsuFileParser
 
 # The confidence cutoff and the rule that applies it live in mlops/labels.py,
-# imported here so existing `from ensemble_evaluator import THRESHOLD` keeps
+# imported here so existing `from osu_tagger.training.ensemble import THRESHOLD` keeps
 # working. It is written into model_config.json, which is where the app reads
 # it, and every recorded metric is measured at it - so it is a constant to be
 # read, not a parameter to be tuned here.
@@ -194,7 +194,7 @@ def predict_with_ensemble(osu_file_path, threshold, assets, classifier):
         return ["Map is too short."]
 
     if feature_version == 2:
-        from features_v2 import FEATURE_NAMES_V2, extract_features_v2
+        from osu_tagger.features.v2 import FEATURE_NAMES_V2, extract_features_v2
         raw_features = extract_features_v2(parser.extract_raw_hit_objects(),
                                            parser.get_difficulty(), parser.get_timing_points())
         max_stream_length = round(np.expm1(raw_features[FEATURE_NAMES_V2.index('log_longest_chain')]))

@@ -27,7 +27,7 @@ from mlops.labels import THRESHOLD
 
 @task(name='build-dataset')
 def build_dataset_task(max_maps, output):
-    from dataset_builder import build_full_dataset, save_dataset
+    from osu_tagger.data.builder import build_full_dataset, save_dataset
 
     logger = get_run_logger()
     logger.info("Scraping up to %d maps into %s", max_maps, output)
@@ -41,7 +41,7 @@ def build_dataset_task(max_maps, output):
 
 @task(name='train-ensemble')
 def train_task(dataset, models, epochs, train_seed, candidate_dir, feature_version=1):
-    from ensemble_evaluator import train_and_evaluate_ensemble
+    from osu_tagger.training.ensemble import train_and_evaluate_ensemble
 
     logger = get_run_logger()
     logger.info("Training %d model(s) for %d epoch(s) into %s",

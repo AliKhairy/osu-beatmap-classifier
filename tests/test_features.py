@@ -26,7 +26,7 @@ GOLDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 @pytest.fixture(scope='module')
 def classifier():
     os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
     return ImprovedBeatmapClassifier()
 
 
@@ -38,7 +38,7 @@ def golden():
 
 class TestConstants:
     def test_feature_names_match_feature_count(self):
-        from neural_model import BASE_FEATURE_NAMES, FEATURE_COUNT
+        from osu_tagger.features.v1 import BASE_FEATURE_NAMES, FEATURE_COUNT
         assert len(BASE_FEATURE_NAMES) == FEATURE_COUNT
 
     def test_aggregated_vector_is_ninety_features(self):
@@ -46,30 +46,30 @@ class TestConstants:
         90 = 29 base features x (max, mean, std) + 3 hybrid flags. The C# app
         validates this exact length, so it is a contract, not a coincidence.
         """
-        from neural_model import AGGREGATED_FEATURE_COUNT, FEATURE_COUNT
+        from osu_tagger.features.v1 import AGGREGATED_FEATURE_COUNT, FEATURE_COUNT
         assert FEATURE_COUNT == 29
         assert AGGREGATED_FEATURE_COUNT == 90
         assert AGGREGATED_FEATURE_COUNT == FEATURE_COUNT * 3 + 3
 
     def test_feature_names_are_unique(self):
-        from neural_model import FEATURE_NAMES
+        from osu_tagger.features.v1 import FEATURE_NAMES
         assert len(set(FEATURE_NAMES)) == len(FEATURE_NAMES)
 
     def test_threshold_is_the_shipped_value(self):
-        from ensemble_evaluator import THRESHOLD
+        from osu_tagger.training.ensemble import THRESHOLD
         assert THRESHOLD == 0.26
 
 
 class TestExtractMeaningfulFeatures:
     def test_empty_input_returns_zero_vector(self, classifier):
-        from neural_model import FEATURE_COUNT
+        from osu_tagger.features.v1 import FEATURE_COUNT
         out = classifier.extract_meaningful_features([])
         assert out.shape == (FEATURE_COUNT,)
         assert np.all(out == 0)
 
     def test_too_few_objects_returns_zero_vector(self, classifier):
         """Below MIN_OBJECTS_FOR_FEATURES the statistics are meaningless."""
-        from neural_model import MIN_OBJECTS_FOR_FEATURES
+        from osu_tagger.features.v1 import MIN_OBJECTS_FOR_FEATURES
         objs = [[100, 100, t * 100, 1, None, [], 1, 0]
                 for t in range(MIN_OBJECTS_FOR_FEATURES - 1)]
         out = classifier.extract_meaningful_features(objs)
@@ -82,7 +82,7 @@ class TestExtractMeaningfulFeatures:
         assert np.all(out == 0)
 
     def test_returns_finite_values_for_a_normal_section(self, classifier):
-        from neural_model import FEATURE_COUNT
+        from osu_tagger.features.v1 import FEATURE_COUNT
         objs = [[100 + i * 30, 200, i * 120, 1, None, [], 1, 0] for i in range(40)]
         out = classifier.extract_meaningful_features(objs)
         assert out.shape == (FEATURE_COUNT,)
@@ -93,7 +93,7 @@ class TestExtractMeaningfulFeatures:
         Tightly spaced, closely placed objects are a stream by definition
         (gap < STREAM_GAP_MS and spacing < STREAM_MAX_SPACING_PX).
         """
-        from neural_model import STREAM_MIN_LENGTH
+        from osu_tagger.features.v1 import STREAM_MIN_LENGTH
         objs = [[100 + i * 10, 200, i * 100, 1, None, [], 1, 0] for i in range(20)]
         out = classifier.extract_meaningful_features(objs)
         assert out[2] >= STREAM_MIN_LENGTH, "max_continuous_stream should see the stream"
@@ -107,7 +107,7 @@ class TestExtractMeaningfulFeatures:
 
 class TestSectionSplitting:
     def test_gap_longer_than_threshold_splits(self, classifier):
-        from neural_model import BREAK_THRESHOLD_MS, MIN_SECTION_LENGTH
+        from osu_tagger.features.v1 import BREAK_THRESHOLD_MS, MIN_SECTION_LENGTH
         first = [[100, 100, i * 100, 1, None, [], 1, 0] for i in range(MIN_SECTION_LENGTH + 5)]
         start = first[-1][2] + BREAK_THRESHOLD_MS + 1
         second = [[100, 100, start + i * 100, 1, None, [], 1, 0]
@@ -116,7 +116,7 @@ class TestSectionSplitting:
 
     def test_gap_at_threshold_does_not_split(self, classifier):
         """The split is on `> threshold`, so exactly the threshold stays joined."""
-        from neural_model import BREAK_THRESHOLD_MS, MIN_SECTION_LENGTH
+        from osu_tagger.features.v1 import BREAK_THRESHOLD_MS, MIN_SECTION_LENGTH
         first = [[100, 100, i * 100, 1, None, [], 1, 0] for i in range(MIN_SECTION_LENGTH + 5)]
         start = first[-1][2] + BREAK_THRESHOLD_MS
         second = [[100, 100, start + i * 100, 1, None, [], 1, 0]
@@ -124,7 +124,7 @@ class TestSectionSplitting:
         assert len(classifier.split_beatmap_into_sections(first + second)) == 1
 
     def test_short_sections_are_dropped(self, classifier):
-        from neural_model import BREAK_THRESHOLD_MS, MIN_SECTION_LENGTH
+        from osu_tagger.features.v1 import BREAK_THRESHOLD_MS, MIN_SECTION_LENGTH
         long_part = [[100, 100, i * 100, 1, None, [], 1, 0]
                      for i in range(MIN_SECTION_LENGTH + 5)]
         start = long_part[-1][2] + BREAK_THRESHOLD_MS + 1
@@ -135,14 +135,14 @@ class TestSectionSplitting:
         assert classifier.split_beatmap_into_sections([]) == []
 
     def test_unbroken_map_is_one_section(self, classifier):
-        from neural_model import MIN_SECTION_LENGTH
+        from osu_tagger.features.v1 import MIN_SECTION_LENGTH
         objs = [[100, 100, i * 100, 1, None, [], 1, 0] for i in range(MIN_SECTION_LENGTH + 10)]
         assert len(classifier.split_beatmap_into_sections(objs)) == 1
 
 
 class TestAggregation:
     def test_aggregated_vector_length(self, classifier):
-        from neural_model import AGGREGATED_FEATURE_COUNT
+        from osu_tagger.features.v1 import AGGREGATED_FEATURE_COUNT
         objs = [[100 + i * 20, 150, i * 110, 1, None, [], 1, 0] for i in range(40)]
         vec = classifier._aggregate_features_for_map([objs])
         assert vec.shape == (AGGREGATED_FEATURE_COUNT,)
@@ -170,7 +170,7 @@ class TestGoldenVector:
             "golden references a map that is not in the repo"
 
     def test_golden_vector_is_unchanged(self, classifier, golden):
-        from osu_parser import OsuFileParser
+        from osu_tagger.parsing import OsuFileParser
 
         parser = OsuFileParser(os.path.join(REPO_ROOT, golden['osu_file']))
         parser.read_file()
@@ -185,7 +185,7 @@ class TestGoldenVector:
                     "FeatureExtractor and regenerate both sets of goldens.")
 
     def test_golden_section_count_is_unchanged(self, classifier, golden):
-        from osu_parser import OsuFileParser
+        from osu_tagger.parsing import OsuFileParser
 
         parser = OsuFileParser(os.path.join(REPO_ROOT, golden['osu_file']))
         parser.read_file()

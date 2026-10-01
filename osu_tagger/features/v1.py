@@ -1,4 +1,4 @@
-# neural_model.py
+# osu_tagger/features/v1.py (was neural_model.py; a root shim keeps that name for old pickles)
 """
 Defines the core machine learning model for the osu! Beatmap Classifier.
 
@@ -17,7 +17,7 @@ import numpy as np
 import tensorflow as tf
 from sklearn.preprocessing import MultiLabelBinarizer, StandardScaler
 from sklearn.model_selection import train_test_split
-from osu_parser import OsuFileParser
+from osu_tagger.parsing import OsuFileParser
 
 # --- Constants ---
 CLASSIFIER_PATH = 'beatmap_classifier.pkl'
@@ -79,7 +79,7 @@ assert AGGREGATED_FEATURE_COUNT == FEATURE_COUNT * 3 + 3
 # the SAME NAME (PascalCase there). The model is trained on these numbers and runs
 # on those, so a value that differs between the two silently corrupts every
 # prediction - no crash, no error. Change one side, change the other, then run the
-# parity harness and regenerate the goldens (make_goldens.py) before shipping.
+# parity harness and regenerate the goldens (python -m osu_tagger.parity.goldens) before shipping.
 
 # Section splitting: a 2s pause reliably marks a gameplay break.
 BREAK_THRESHOLD_MS = 2000

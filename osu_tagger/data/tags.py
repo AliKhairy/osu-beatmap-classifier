@@ -1,4 +1,4 @@
-# tag_scraper.py
+# osu_tagger/data/tags.py (was tag_scraper.py)
 """
 This module is responsible for scraping the tag library from echosu.com.
 
