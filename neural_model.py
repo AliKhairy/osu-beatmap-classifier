@@ -565,11 +565,17 @@ class ImprovedBeatmapClassifier:
             print(f"Error: Failed to save model. {e}")
             return False
 
-    def predict_tags(self, osu_file_path, threshold=0.27):
+    def predict_tags(self, osu_file_path, threshold=None):
         """
         Predicts tags for a single .osu file, with post-processing
         to correct neural network bias on hybrid maps.
         """
+        # The shared decision rule (mlops/labels.py) - imported here rather than
+        # at module top so this file's feature math stays free of new imports.
+        from mlops.labels import THRESHOLD, predicted, suppress_redundant
+        if threshold is None:
+            threshold = THRESHOLD
+
         if not self.is_trained:
             if not self.load_model():
                 return ["Model not trained or loaded. Please train the model first."]
@@ -598,7 +604,7 @@ class ImprovedBeatmapClassifier:
         print("\nPrediction Probabilities:")
         for i, tag in enumerate(self.label_binarizer.classes_):
             prob = probabilities[i]
-            is_predicted = prob >= threshold
+            is_predicted = predicted(prob, threshold)
             print(f"  [{'x' if is_predicted else ' '}] {tag:<20} | Probability: {prob:.3f}")
             if is_predicted:
                 predicted_tags.append(tag)
@@ -619,12 +625,14 @@ class ImprovedBeatmapClassifier:
                 predicted_tags.append('streams')
                 print(f"\n[!] OVERRIDE: Network bias corrected. Map contains a {int(max_stream_length)}-note stream. Forcing 'streams' tag.")
 
+        # Hide a general tag beside a specific one that already says it.
+        predicted_tags = suppress_redundant(predicted_tags)
         # Sort alphabetically for clean output
         predicted_tags.sort()
 
         return predicted_tags if predicted_tags else ["No tags above threshold."]
 
-    def test_multiple_maps(self, songs_folder="songs", threshold=0.27, max_maps=10):
+    def test_multiple_maps(self, songs_folder="songs", threshold=None, max_maps=10):
         """
         A utility function to run predictions on multiple maps in a folder.
         """

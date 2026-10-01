@@ -38,12 +38,17 @@ def _metrics_for(model_dir, prepared, split, support, floor, threshold):
     import numpy as np
     from sklearn.metrics import f1_score
 
+    from mlops.labels import predicted, project_probabilities
     from mlops.scoring import ensemble_probabilities, load_ensemble
 
-    models, scaler, _ = load_ensemble(model_dir)
+    models, scaler, binarizer = load_ensemble(model_dir)
+    # Same projection score_on_holdout applies, so seeds trained under an older
+    # label policy are measured on the label space the gate now scores.
+    projection = project_probabilities(binarizer.classes_, prepared.classes)
     y_true = prepared.y[split.test_idx]
-    probs = ensemble_probabilities(models, scaler, prepared.X[split.test_idx])
-    y_pred = (probs >= threshold).astype(int)
+    probs = projection.apply(
+        ensemble_probabilities(models, scaler, prepared.X[split.test_idx]))
+    y_pred = predicted(probs, threshold).astype(int)
 
     per_tag = f1_score(y_true, y_pred, average=None, zero_division=0)
     never = y_pred.sum(axis=0) == 0
@@ -66,15 +71,23 @@ def main():
     ap.add_argument('--dataset', default='ml_dataset.json')
     ap.add_argument('--models', type=int, default=5)
     ap.add_argument('--epochs', type=int, default=100)
-    ap.add_argument('--threshold', type=float, default=0.27)
+    ap.add_argument('--threshold', type=float, default=None,
+                    help='Default: mlops.labels.THRESHOLD, the value the gate scores at')
     ap.add_argument('--k', type=float, default=4.0,
                     help='Tolerance multiple of sigma (default: 4, see promote.py)')
     ap.add_argument('--champion-dir', default='.',
                     help='Scored as an extra same-config sample and as the baseline')
     ap.add_argument('--out', default='gate_calibration.json')
     ap.add_argument('--retrain', action='store_true',
-                    help='Retrain seeds even if candidates/seed-N already exists')
+                    help='Retrain seeds even if candidates/<prefix>N already exists')
+    ap.add_argument('--prefix', default='seed-',
+                    help='Seed directory prefix under candidates/. Use a new one '
+                         'when the label space changes, so earlier calibration '
+                         'runs stay intact as evidence (default: seed-)')
     args = ap.parse_args()
+    if args.threshold is None:
+        from mlops.labels import THRESHOLD
+        args.threshold = THRESHOLD
 
     from ensemble_evaluator import train_and_evaluate_ensemble
     from mlops import split as split_mod
@@ -90,7 +103,7 @@ def main():
 
     runs = {}
     for seed in args.seeds:
-        out_dir = os.path.join('candidates', 'seed-%d' % seed)
+        out_dir = os.path.join('candidates', '%s%d' % (args.prefix, seed))
         if args.retrain or not os.path.isdir(out_dir):
             print('\n=== training seed %d -> %s ===' % (seed, out_dir), flush=True)
             t0 = time.time()

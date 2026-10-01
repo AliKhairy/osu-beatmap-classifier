@@ -61,7 +61,8 @@ jobs:
           # Also proves the lazy-import discipline holds: promote, drift and
           # pipeline import mlflow/evidently/prefect inside their functions, so
           # --help must not pay for (or require) those imports.
-          for verb in build-dataset rebuild train train-ensemble export-onnx \
+          for verb in build-dataset rebuild enrich-dataset train train-ensemble export-onnx \
+                      tag-probabilities threshold-sweep \
                       predict evaluate promote drift pipeline; do
             echo "::group::$verb --help"
             docker run --rm osu-classifier:ci "$verb" --help
@@ -108,6 +109,14 @@ jobs:
           fi
           if docker run --rm osu-classifier:ci evaluate --holdout; then
             echo "Expected 'evaluate --holdout' to fail with no dataset, got exit 0"
+            exit 1
+          fi
+          if docker run --rm osu-classifier:ci tag-probabilities --model-dir /nonexistent; then
+            echo "Expected 'tag-probabilities' to fail with no models present, got exit 0"
+            exit 1
+          fi
+          if docker run --rm osu-classifier:ci threshold-sweep; then
+            echo "Expected 'threshold-sweep' to fail with no dataset, got exit 0"
             exit 1
           fi
           # rebuild returned 0 unconditionally until recently, even with no

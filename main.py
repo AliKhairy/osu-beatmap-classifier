@@ -10,6 +10,7 @@ from rebuild_from_downloaded import rebuild
 
 # NEW IMPORT: Pull in the ensemble script we just wrote
 from ensemble_evaluator import train_and_evaluate_ensemble
+from mlops.labels import THRESHOLD
 
 # The number of maps to attempt to download when building a new dataset.
 DATA_SET_SIZE = 5000
@@ -126,7 +127,7 @@ def prediction_loop(classifier):
             predict_single_map(classifier, ensemble_available)
         elif choice == '2':
             try:
-                threshold = float(input("Enter prediction threshold (e.g., 0.27): ") or "0.27")
+                threshold = float(input(f"Enter prediction threshold (e.g., {THRESHOLD}): ") or THRESHOLD)
                 max_maps = int(input("Enter number of maps to test (e.g., 5): ") or "5")
 
                 if ensemble_available:
@@ -172,7 +173,7 @@ def predict_single_map(classifier, ensemble_available):
         map_path = os.path.join(songs_folder, chosen_file)
 
         if os.path.exists(map_path):
-            threshold = float(input("Enter prediction threshold (e.g., 0.27): ") or "0.27")
+            threshold = float(input(f"Enter prediction threshold (e.g., {THRESHOLD}): ") or THRESHOLD)
 
             # --- DEFAULT TO ENSEMBLE ---
             if ensemble_available:

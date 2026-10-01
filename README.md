@@ -171,6 +171,7 @@ flowchart TD
 
 ```
 mlops/           split.py        the frozen evaluation split, and data prep
+                 labels.py       the label policy (which tags are trained)
                  scoring.py      loading an ensemble and scoring it
                  metrics_report.py  micro/macro/per-tag F1
                  tracking.py     MLflow wiring
@@ -178,9 +179,17 @@ mlops/           split.py        the frozen evaluation split, and data prep
                  promote.py      the gate decision (pure, unit-tested)
                  drift.py        Evidently batch drift
 flows/           pipeline.py     the Prefect flow
-tests/           test_features.py  extractor + golden-vector regression
-                 test_gate.py      the gate
+tools/           calibrate_gate.py  measuring the gate's noise and tolerance
+                 feature_probe.py   comparing feature sets on a dev split
+                 tag_quality.py     per-tag precision/recall/AUC side by side
+tests/           test_features.py     v1 extractor + golden-vector regression
+                 test_features_v2.py  v2 extractor, one test per v1 flaw
+                 test_labels.py       label policy + scoring across label spaces
+                 test_gate.py         the gate
 samples/         sample_features.csv
+features_v2.py   the v2 feature vector (see "v2 features" below)
+map_meta.py      the difficulty/timing sidecar v2 reads
+docs/            feature_v2_spec.md  the C# port spec for v2
 ```
 
 `neural_model.py`, `cli.py`, `osu_parser.py`, `parity_dump.py` and
@@ -206,7 +215,7 @@ promote  iff  micro_f1 >= champion  - tolerance      (skipped if no champion)
 All must hold. Note the fixed reference applies even on the very first
 promotion: an empty registry is not a licence to ship anything.
 
-**Micro F1, not macro.** Macro F1 weights all 66 tags equally, which sounds like
+**Micro F1, not macro.** Macro F1 weights every tag equally, which sounds like
 the right way to stop a model abandoning rare tags — but on this holdout tag
 support ranges from 2 to 345, and macro F1 varies by 0.0237 (6.8% of the metric)
 across runs of the *identical* configuration. A tolerance honestly calibrated to
@@ -215,17 +224,19 @@ a gate. Micro F1 varies by ~1%, so a tolerance calibrated to it still bites.
 
 Rule 3 is what replaces macro's rare-tag protection, and it targets the hole
 directly: the candidate may not go mute on more tags than the champion does.
-It is restricted to tags with support ≥ 10 because the count over all 66 swings
-11–16 between identical reruns, while the restricted count is a stable 1–2.
+It is restricted to tags with support ≥ 10 because the count over every tag
+swings 11–16 between identical reruns, while the restricted count is a stable 1–2.
 
 **The tolerance is measured, not chosen** — `k × σ` where σ is the seed-to-seed
-standard deviation of micro F1 and `k = 4`. σ rather than the observed max gap,
+standard deviation of micro F1 and `k = 5`. σ rather than the observed max gap,
 because the max gap is an order statistic that keeps widening as runs are added;
-σ converges. `k = 4` rather than 2 or 3 because the champion is itself a noisy
-draw sitting ~1.9σ above the mean, so covering an ordinary `mean − 2σ` candidate
-needs ≈3.9σ. See VERIFIED.md §11–12 for the 10-seed calibration, the validation
-showing all 10 honest reruns pass and the 1-epoch model fails, and the
-first-attempt gate that got this wrong.
+σ converges. k is set so an ordinary `mean − 2σ` candidate still passes: the
+champion is itself a noisy draw, sitting 2.77σ above the retrained seeds' mean on
+the current labels, so the tolerance must cover 2.77σ + 2σ ≈ 4.8σ. (It was
+k = 4 on the original 66 labels, where the champion sat 1.89σ above.) See
+VERIFIED.md §11, §12 and §14 for the 10-seed calibrations, the validation showing every
+honest rerun passes and the 1-epoch model fails, and the first-attempt gate that
+got this wrong.
 
 **The ratchet floor is a fixed reference, not best-ever.** Anchoring to the best
 score ever recorded looks stricter but is a trap: best-ever is the maximum of
@@ -234,7 +245,42 @@ on its own until it rejects ordinary reruns. Measured, an early macro-F1
 tolerance rejected 3 of 10 honest reruns against the real champion but 7 of 10
 once a best-ever floor was added. The reference is the v1 champion's score, so
 the rule reads: never ship a model meaningfully worse than what users already
-have.
+have. It is measured on the current label space (below), so it moves exactly
+when the question the model answers moves.
+
+### Labels: skills only
+
+echosu tags are free-form community votes, so the raw vocabulary mixes playing
+skills with tags about what a map is for, how it feels, or which mod to play it
+with, and some skills go by two names. `mlops/labels.py` holds the policy, and
+both the scraper and dataset preparation apply it:
+
+- **Dropped** (not skills): progressive difficulty, practise, comfortable,
+  dt speed, fast.
+- **Merged** (one skill, two names): alt → alternating, snap → snap aim,
+  flow → flow aim.
+
+That leaves 58 labels. The policy runs after the feature cache and keeps every
+row, including the 2 maps left with no labels, so the frozen holdout does not
+move. A model trained under an older policy is still scored on the current
+labels: dropped columns are discarded and merged tags take the max of their
+members. Any label difference the policy does not explain is refused.
+
+### From probabilities to tags
+
+Also in `mlops/labels.py`, and exported into `model_config.json` so the app reads
+it instead of compiling it in:
+
+- **Threshold 0.26**, applied at display precision: a tag counts when its
+  probability *shown to two decimals* reaches the threshold, so a tag shown as
+  0.26 is always predicted at 0.26 (the raw cutoff is 0.255). Chosen from the
+  dev-split sweep, where micro F1 is flat from about 0.26 to 0.34 and falls
+  either side.
+- **Redundant tags are hidden.** `jumps` is dropped when `large jumps`,
+  `short jumps` or `cross screen jumps` is shown, and `high spacing` when
+  `large jumps` or `cross screen jumps` is. The app searches tags by substring,
+  so a `jumps` search still finds those maps. This is presentation only: the
+  gate still scores the network's raw predictions.
 
 The per-tag CSV logged alongside each run is what tells you *why* a number moved.
 
@@ -274,10 +320,28 @@ python cli.py pipeline --train-seed 1
 
 # Check whether a folder of maps looks like the training data
 python cli.py drift --maps songs/
+
+# Every tag's probability for every map in songs/, from one or more models
+# (terminal view + reports/map_probabilities.csv and .json)
+python cli.py tag-probabilities --model-dir shipped=. --model-dir v2=candidates/my-run
+
+# The threshold trade-off: precision / recall / F1 and tags per map at every
+# threshold from 0.10 to 0.60, on a dev split of the training rows
+python cli.py threshold-sweep
 ```
 
 Use `--root-dir <dir>` on `promote` and `pipeline` to exercise promotion
 without replacing the models in the repo root.
+
+**In Docker** every subcommand above is the image's entrypoint (`docker run
+osu-classifier <subcommand>`). The image holds code and dependencies only; the
+dataset, `downloads/`, `songs/` and model files are kept out of it on purpose, so
+mount the repo to give it data:
+
+```bash
+docker build -t osu-classifier .
+docker run --rm -v "$PWD:/app" osu-classifier tag-probabilities --model-dir shipped=.
+```
 
 ### Seeing the runs
 
@@ -293,8 +357,8 @@ database-backed store.
 ### Trying it without the real dataset
 
 `ml_dataset.json` is ~528 MB and is not in the repo. `samples/sample_features.csv`
-holds 60 already-extracted feature vectors with their tags, covering all 66
-labels, so the pipeline runs end to end on a checkout:
+holds 60 already-extracted (v1) feature vectors with their raw tags, covering
+every label, so the pipeline runs end to end on a checkout:
 
 ```bash
 python cli.py train-ensemble --dataset samples/sample_features.csv \
@@ -303,8 +367,77 @@ python cli.py train-ensemble --dataset samples/sample_features.csv \
 
 It contains **derived statistics and tag labels only — no beatmap content**, and
 is drawn entirely from training rows, so it never overlaps the evaluation
-holdout. Sixty maps across 66 labels trains a model that is statistically
+holdout. Sixty maps across 58 labels trains a model that is statistically
 meaningless; the point is that the machinery runs, not that the result is good.
+
+## v2 features
+
+Measuring the 90 v1 features against the tags showed several of them cannot see
+the pattern their name promises, which is why tags like 1-2 or jumps land on the
+wrong maps:
+
+- The angle buckets are inverted. They measure the turn between movement
+  vectors, not the angle at the middle note, so maps tagged "sharp angles" score
+  *lower* on `sharp_angle_ratio`. They also count every note, stream notes
+  included, so in practice they detect streams.
+- Stream timing is a fixed 165 ms, so above ~182 BPM ordinary 1/2 jumps count as
+  streams. Doubles are not detected at all.
+- Distances are measured from a slider's head instead of where the cursor
+  leaves it (36% of moves), spinners count as notes at screen centre, and
+  circle size and timing points are never read.
+
+`features_v2.py` rebuilds the vector (72 features) against each tag's
+definition, using echosu's own wording where there is one. Rhythm is judged
+against the beat, spacing is in circle radii, moves start at slider ends, and
+spinners are dropped. v1 stays byte-for-byte unchanged because the app computes
+it; each trained model directory records its version in `feature_meta.json`, and
+the gate scores each model on its own version's features over the same holdout.
+
+```bash
+# One-off: difficulty + timing points from downloads/ into map_meta.json (no network)
+python cli.py enrich-dataset
+
+# Compare feature sets on a dev split carved from the TRAINING rows (holdout untouched)
+python -m tools.feature_probe --sets v1 v2 --seeds 1 2 3
+
+# Train and gate a v2 candidate exactly like a v1 one
+python cli.py train-ensemble --feature-version 2 --out-dir candidates/v2-run --train-seed 1
+python cli.py promote --candidate candidates/v2-run --root-dir <temp dir>
+
+# Per-tag precision / recall / AUC, side by side, on the holdout
+python -m tools.tag_quality --arm champion . --arm v2 candidates/v2-run
+```
+
+On the frozen holdout, v2 beats v1 retrained on the same labels: micro F1 0.582
+vs 0.557, with higher precision *and* recall and fewer false positives. The
+gains are largest on the pattern tags that were being misplaced (1-2, cut
+streams, streams, square jumps, sharp angles). See VERIFIED.md §15.
+
+**The app side is ported** (`FeatureExtractorV2.cs`, branch `feat/v2-features`
+in OsuScoutNew). It matches Python to 9e-13 over 4961 maps, and gives identical
+tags end to end. `export-onnx` still refuses a v2 model unless you pass
+`--allow-feature-version 2`, because app releases without the port cannot run
+one. The spec is `docs/feature_v2_spec.md`.
+
+**The v2 golden** (`tests/golden_feature_vector_v2.json`) is the exact 72 numbers
+v2 produces for one committed map, `songs/Polyphia - Playing God (Mir) [Nirvana].osu`.
+The test suite pins it, so any change to the v2 maths fails a test, and the C#
+port is checked against the same numbers. `make_goldens.py --feature-version 2`
+writes the same kind of golden for the app's three parity fixtures, and
+`parity_dump.py --feature-version 2` dumps any map.
+
+```bash
+# See the difference map by map, on maps you know
+python -m tools.compare_on_maps --model-dir . --model-dir candidates/v2-run
+
+# Every tag's probability for every map in a folder, from one or more models:
+# a terminal view plus reports/map_probabilities.csv (and .json)
+python cli.py tag-probabilities --model-dir shipped=. --model-dir v2=candidates/v2-run
+
+# The threshold trade-off, measured on a dev split of the training rows:
+# precision / recall / F1 and tags per map at every threshold from 0.10 to 0.60
+python cli.py threshold-sweep
+```
 
 ## License
 

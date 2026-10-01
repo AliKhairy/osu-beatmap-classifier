@@ -9,6 +9,10 @@ used macro F1 with a tolerance of 0.008. That calibration was wrong; section 11
 shows why and section 12 documents the gate that replaced it. They are kept
 because how the number came out wrong is part of the record.
 
+**Section 12's constants are superseded by section 14.** The label set was cut
+to 58 skill tags, which moves every score, so the reference, sigma and k were
+re-measured on the new label space. Section 12's method is unchanged.
+
 Environment: Windows 11, Python 3.12.0, TensorFlow 2.21.0, Keras 3.15.0,
 scikit-learn 1.9.0, numpy 2.5.0. Dataset `ml_dataset.json`, sha256
 `a88572be06c657b0ce4a814d7b60d31340af70e45dcb9e87899474b515a27ef6`.
@@ -957,6 +961,340 @@ The other three constraints:
 
 ---
 
+## 14. The label policy, and re-measuring the gate for it
+
+Added 2026-09-30. The label set was cut to skills only (`mlops/labels.py`): five
+tags dropped (progressive difficulty, practise, comfortable, dt speed, fast) and
+three synonym pairs merged (alt → alternating, snap → snap aim, flow → flow aim).
+Changing the label space moves every score, so everything the gate reads was
+re-measured on the new space rather than carried over. **Section 12's constants
+are superseded by this section.**
+
+### The data and the holdout
+
+```
+$ python -m mlops.split
+[labels] policy kept 22203 of 22901 tag instances; 2 maps now have no labels
+  n_rows 4643   n_labels 58   n_holdout 929
+  holdout_id_sha256 1da06c95cc6655a63688b0e60ee3061135d9cf80eadfa602be1717e44c0060e4
+```
+
+- 603 instances are dropped outright; the other 95 are duplicates removed where a
+  map carried both names of a merged pair (alt+alternating 32, snap+snap aim 8,
+  flow+flow aim 55).
+- The policy runs after the feature cache and never removes rows. The 2 maps
+  left without labels keep their rows, so the holdout hash is the one in §2.
+
+### The reference: the shipped models, on the new question
+
+The shipped 66-label ensemble is scored on the 58 labels by projecting its
+outputs: dropped columns are discarded, and a merged tag takes the max of its
+members (`labels.project_probabilities`). Any other label difference is refused.
+
+```
+$ python -c "... score_on_holdout('.', prepared, split) ..."
+[labels] Scoring . (66 labels) on the current 58-label space: dropped [comfortable,
+  dt speed, fast, practise, progressive difficulty]; merged [alternating <- alt+alternating,
+  flow aim <- flow+flow aim, snap aim <- snap+snap aim]
+micro_f1=0.5629 macro_f1=0.3723 weighted_f1=0.5425 (never-predicted 1/46 supported, 9/58 overall)
+```
+
+`REFERENCE_MICRO_F1` moves from 0.556967 to **0.562950**. Leaving it at the old
+value would have let every new-label candidate through about 0.006 below what
+users already have, which is over 3 sigma of training noise.
+
+### Noise: ten retrains on the new labels
+
+`python -m tools.calibrate_gate --prefix labels58-seed-` trained the identical
+configuration on the 58 labels ten times, varying only `--train-seed`:
+
+```
+seed 1   micro_f1=0.556803    seed 6   micro_f1=0.560187
+seed 2   micro_f1=0.553828    seed 7   micro_f1=0.557510
+seed 3   micro_f1=0.558094    seed 8   micro_f1=0.557664
+seed 4   micro_f1=0.558296    seed 9   micro_f1=0.556111
+seed 5   micro_f1=0.559237    seed 10  micro_f1=0.553626
+mean 0.557136   sigma 0.002130   gap/sigma 3.08
+never_predicted_supported: [1, 2, 1, 1, 0, 1, 1, 1, 1, 1]  (champion 1)
+```
+
+### Why the champion sits 2.77 sigma above them
+
+The shipped model scores 0.562950, and the retrains average 0.557136. The same
+tool, run with `--prefix seed-` over the ten existing **66-label** seeds, scores
+those seeds on the 58 labels by projection, which splits the 0.0058 gap in two:
+
+| Comparison | micro F1 | Share of the gap |
+|---|---|---|
+| shipped champion (projected) | 0.562950 | |
+| 66-label seeds, projected (mean of 10, sigma 0.001987) | 0.559025 | 0.0039: the champion was a lucky draw, as §12 already found (1.89 sigma on 66 labels) |
+| 58-label retrains (mean of 10) | 0.557136 | 0.0019 (about 2 standard errors): a model trained on a merged tag scores lower at the fixed 0.27 threshold than the max of two separately trained outputs |
+
+### The tolerance, by the documented rule
+
+§12's rule sets k so that a candidate at an ordinary mean − 2 sigma still passes
+against the fixed champion: k ≥ (champion − mean)/sigma + 2 = 2.77 + 2 = 4.77, so
+**k = 5**, tolerance 5 × 0.002130 = **0.010650**.
+
+```
+$ python -m tools.calibrate_gate --prefix labels58-seed- --k 5
+  MICRO_F1_SIGMA = 0.002130   TOLERANCE_K = 5   DEFAULT_TOLERANCE = 0.010650
+  worst run 0.553626 vs champion floor 0.552300 -> accepted
+```
+
+- **Every honest retrain passes** at k = 5. At k = 4 (floor 0.554430) seeds 2
+  and 10 would be rejected.
+- **The 1-epoch model is still rejected by a wide margin.** Projected onto the
+  58 labels it scores 0.420240, against a floor of 0.552300.
+- **The never-predicted allowance of +1 still admits every rerun** (0 to 2,
+  against the champion's 1).
+
+All three are pinned in `tests/test_gate.py`, including a test that replays the
+ten measured seeds and the 1-epoch model through `decide()`.
+
+---
+
+## 15. v2 features: built on the dev split, judged once on the holdout
+
+`features_v2.py` (72 features) replaces v1's measurements where v1 could not see
+the pattern a tag names. v1 is untouched (the v1 golden test still passes
+bit-for-bit). Everything here uses the 58-label space from §14.
+
+### The holdout was not used to build it
+
+Features were iterated with `tools/feature_probe.py`, which carves a dev split
+out of the 3714 **training** rows (2971 train / 743 val, seed 7) and asserts no
+holdout row is in it. The 929-map holdout was scored once, at the end.
+
+### Same rows, same holdout
+
+v2 reuses v1's row filter, and `prepare_for_versions` refuses to proceed if the
+two versions disagree on which rows exist or in what order:
+
+```
+$ python -m mlops.split --feature-version 2
+[split] v2 features for 4643 rows; 0 had no map_meta entry and used defaults
+  n_features 72   n_labels 58   holdout_id_sha256 1da06c95...   (identical to v1)
+```
+
+`cli.py enrich-dataset` found a `.osu` file in `downloads/` for all 4645
+dataset entries, with no object-count mismatches.
+
+### Two bugs found on the way, both now guarded
+
+1. **Trick timing points.** Three maps use red lines of 1e-298 ms or more than
+   60000 ms. Unclamped, one produced a BPM of 5e301.
+   - `StandardScaler` overflowed on it without raising, and the first three v2
+     ensembles each learned a constant output (holdout micro F1 0.26, identical
+     across seeds).
+   - Fixed by clamping beat length to [6, 60000] ms, the range osu! lazer
+     allows.
+   - `split.scale_all` now **refuses** any column whose standardised values
+     exceed √n. That bound is a mathematical limit for a finite column, so
+     exceeding it proves an overflow.
+2. **Gimmick maps dominating a column.** A 2970-radius slider, a 517-anchor
+   slider and a 4830 BPM section each set a column's scale for every map. The
+   heavy-tailed features now carry a log: the column's maximum |z| fell from 68.0
+   (the √(n−1) limit) to 41.8, against v1's 33.6.
+
+The two tagged failures (1-2 recall, slider jumps) were found and fixed on the
+dev split, by comparing which features separate each tag on training rows only:
+
+| Tag | Weak v2 feature | Replacement | Cohen's d |
+|---|---|---|---|
+| 1-2 | "lands on its start point" (not even in the top 6) | runs of ≥3 direction reversals at any rhythm | **+2.03**, beating v1's best of +1.94 |
+| slider jumps | into / out of a slider, pooled | "jump onto a slider" split out | +0.59, vs +0.47 pooled |
+
+### Dev split (single ensemble members, 3 seeds each, final v2)
+
+```
+                       v1            v2
+micro precision   0.485 ±.002   0.501 ±.008
+micro recall      0.625 ±.006   0.637 ±.009
+micro F1          0.546 ±.004   0.561 ±.003
+false positives    2402 ±11      2300 ±103
+```
+
+Ablation, run on v2 before the clamp and log fixes: every group was removed in
+turn (3 seeds each). Removing any group lowered micro F1 or left it level, and
+raised false positives; the jumps group mattered most (0.560 → 0.519).
+`v1+v2` combined (0.556) did not beat v2 alone (0.560), so v1 carries nothing
+v2 lacks.
+
+### The holdout: once, at the end
+
+`python -m tools.tag_quality --arm champion . --arm v1-58labels <10 seeds> --arm v2 <3 seeds>`
+
+The v1 arm is ten v1-feature ensembles retrained on the same 58 labels, so the
+v1-vs-v2 difference is the features alone.
+
+```
+                  champion   v1-58labels (10)   v2 (3)
+micro precision     0.507     0.499 ±.003       0.522 ±.004
+micro recall        0.633     0.630 ±.005       0.658 ±.002
+micro F1            0.563     0.557 ±.002       0.582 ±.003
+false positives      2778      2847 ±42          2716 ±36
+```
+
+**Micro F1 is +0.025 over the v1 retrains**, about 12 sigma of seed noise.
+Precision and recall rise together.
+
+Per-tag precision at 0.27 (v1 retrains → v2):
+
+| Change | Tags |
+|---|---|
+| Improved | **1-2 0.39 → 0.51**, **cut streams 0.26 → 0.46**, streams 0.55 → 0.62, square jumps 0.78 → 0.93, sharp angles 0.51 → 0.56, variable streams 0.36 → 0.42, large jumps 0.49 → 0.53, high spacing 0.44 → 0.47, snap aim 0.31 → 0.35, triples, bursts, burst sliders; **variable bpm** is predicted at all (precision 0.75, from never) |
+| Flat | jumps, short jumps, flow aim, slider jumps, alternating |
+| Worse | doubles 0.36 → 0.33 (recall unchanged) |
+
+Ranking ability (AUC) improved for:
+- snap aim 0.796 → 0.845;
+- cut streams 0.898 → 0.942;
+- square jumps 0.955 → 0.983;
+- linear aim 0.787 → 0.828;
+- variable bpm 0.666 → 0.794.
+
+Sibling-tag coupling fell where v2 added the distinguishing feature (cut streams
+/ streams 0.78 → 0.65; spaced streams / streams 0.84 → 0.77). For most pairs it
+is still well above the label correlation.
+
+**Buzz sliders.** Precision went to 0 at the threshold. Its AUC is 0.842 → 0.811
+on 5 holdout maps, which is noise-sized. The v2 feature separates the tag as
+well as v1's does on training rows (d +2.87 vs +2.95).
+
+### The gate, across feature versions
+
+The runs used a throwaway registry (`MLFLOW_TRACKING_URI=sqlite:///.tmp_mlflow_v2gate.db`)
+and temp root directories:
+
+```
+promote --candidate .                     -> PROMOTE (first champion, 0.562950)
+promote --candidate candidates/v2-seed-1  -> PROMOTE
+  Candidate: micro_f1=0.5792 (v2 features)
+  Champion re-scored on this split: micro_f1=0.5629 (v1 features, label projection)
+  [PASS] micro_f1 vs champion   0.579220 vs floor 0.552300
+  [PASS] micro_f1 vs reference  0.579220 vs floor 0.552300
+  [PASS] never-predicted tags   0 vs limit 2
+promote --candidate candidates/v2-seed-2  -> PROMOTE
+  Champion re-scored: micro_f1=0.5792   <- the v2 champion came back out of the
+                                           registry and was fed v2 features
+export-onnx --model-dir candidates/v2-seed-1
+  -> refused, exit 1: "holds a v2-feature model, but the app computes v1 features"
+```
+
+The real `mlflow.db` and the repo-root models were not modified.
+
+### By eye, on `songs/`
+
+`python -m tools.compare_on_maps --model-dir . --model-dir candidates/v2-seed-1`
+covers the 31 committed maps. 12 of them are in the dataset, so their community
+tags serve as a reference:
+
+| Where the two models disagree | Community tags among them |
+|---|---|
+| tags only the shipped model gives | **2 of 30** |
+| tags only v2 gives | 5 of 12 |
+
+- v2 is closer to the community tags on 8 of the 12 maps and further on none.
+- **On the 5 of those maps that are in the holdout** (unseen by both models), v2
+  is closer on 4 and ties on 1.
+
+---
+
+## 16. Threshold 0.26, redundant tags, and the C# port
+
+Added 2026-09-30.
+
+### The decision rule
+
+- **Threshold 0.26**, decided from the dev-split sweep (`tools/feature_probe.py
+  --members 5 --sweep`, training rows only). Micro F1 is flat from about 0.26
+  to 0.34 and falls either side.
+- **Applied at display precision.** A tag counts when `p >= 0.26 - 0.005`, so a
+  tag shown as 0.26 is predicted. `tests/test_labels.py` pins the boundary:
+  0.2551 is in and 0.2549 is out.
+- **Written into `model_config.json`** (`threshold`, `display_decimals`), so the
+  app reads it instead of compiling it in.
+
+### The gate, re-measured at 0.26
+
+Same method as §14: scoring only, over the same ten 58-label seeds.
+
+```
+$ python -m tools.calibrate_gate --prefix labels58-seed- --k 5
+seeds: 0.555957 0.552091 0.555059 0.557399 0.557573 0.559607 0.554348 0.555387 0.556137 0.552354
+mean 0.555591   sigma 0.002318   champion (projected) 0.561577   never(supported) 0..1
+worst run 0.552091 vs champion floor 0.549987 -> accepted
+```
+
+- (0.561577 − 0.555591) / 0.002318 = **2.58** sigma, plus 2 gives 4.58, so
+  **k stays 5**.
+- Tolerance is 0.011590 and `REFERENCE_MICRO_F1` is 0.561577293075531.
+- The 1-epoch model scores 0.414121 and is rejected.
+- The v2 candidates score 0.577803, 0.583103 and 0.576743.
+
+### Redundant tags
+
+`labels.SUPPRESSED_BY`, measured on v2's holdout predictions:
+
+| Hidden tag | When shown next to | Evidence |
+|---|---|---|
+| jumps | large / short / cross screen jumps | predicted with large jumps 57% of the time (community 29%), with short jumps 86% (community 53%) |
+| high spacing | large / cross screen jumps | 65% of its predictions come with large jumps; alone it is right 33% of the time. The community uses it independently on 242 of 445 maps, so it is hidden rather than dropped |
+
+- Hiding `jumps` moves displayed micro precision 0.509 → 0.510 and recall
+  0.677 → 0.668.
+- It is presentation only: the gate still scores raw predictions.
+- The app searches by substring, so a `jumps` search still finds these maps.
+
+### C# port: feature parity
+
+`FeatureExtractorV2.cs`, run through `parity/ParityDump --feature-version 2`:
+
+| Test | Result |
+|---|---|
+| Golden map (Polyphia) | all 72 features within 3e-14 |
+| App fixtures stream / jump / tech (v2) | PASS at atol = rtol = 1e-9 |
+| App fixtures stream / jump / tech (v1) | still PASS: the parser change did not move v1 |
+| All 4974 files in `downloads/` (`--dir` mode against Python) | every one of the 4961 readable maps within 9.16e-13 (median per-map worst 1.8e-14) |
+| `songs/` (31 maps) | all within 7e-14 |
+
+The 13 remaining files are:
+- **12 zero-byte files** (failed downloads);
+- **one 14.6 MB file.** The app's parser deliberately refuses files over 5 MB.
+
+The app skips both kinds before extracting any features.
+
+**One real disagreement, and it was a feature flaw.**
+- On `downloaded_215463.osu`, `aim_trend` came out +0.047 in Python and −0.017
+  in C#.
+- Every 4-second window there has the same aim load (0.21333…), so the "trend"
+  correlated floating-point rounding (1e-16) with time, and summation order
+  decided its sign.
+- **Fix:** a load series whose spread is under 1e-9 of its size counts as flat
+  (trend 0), in both languages. It affects exactly one of the 4626 dataset maps;
+  the next flattest has a relative spread of 4e-5.
+- The v2 candidates were not retrained for one feature on one map.
+- The v2 golden is unchanged, and a new test covers a perfectly regular map.
+
+### C# port: end to end
+
+The pieces:
+- `candidates/v2-seed-2` was exported with
+  `cli.py export-onnx --allow-feature-version 2`; without the flag the export
+  refuses.
+- A scratch harness compiled the app's real `OsuParser`, `FeatureExtractorV2`
+  and `OsuClassifier` against those ONNX files and ran them on the 31 `songs/`
+  maps.
+
+The results:
+- **Probabilities** are within 2.1e-7 of Python's Keras ensemble (float32).
+- **Final tag lists**, after the 0.26 rule and redundancy suppression, are
+  identical on all 31 maps.
+- **The app builds** (`dotnet build`) with no new warnings.
+
+---
+
 ## Caveats
 
 These qualify the numbers above. None of them are defects introduced by this
@@ -1001,5 +1339,6 @@ implies otherwise.
 - **No CD to the app repo.** Promotion updates the local registry and the repo
   root. Copying the 6 files into `OsuScoutNew/Assets/` and cutting a release
   remains a manual step, in a repository this work does not touch.
-- **No BPM feature.** Known to be missing from the 90-feature vector; changing
-  the vector would break C# parity and was excluded from this work.
+- **v2 is not yet released in the app.** The port exists and is verified (§16)
+  on the app repo's `feat/v2-features` branch, but no v2 model has been promoted
+  in the real registry, copied into `OsuScoutNew/Assets/`, or released.

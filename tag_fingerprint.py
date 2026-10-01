@@ -9,6 +9,7 @@ cannot see the tag => that's what we need to add.
 import json
 import numpy as np
 from collections import defaultdict
+from mlops.labels import apply_label_policy
 from neural_model import ImprovedBeatmapClassifier
 
 FEAT = [
@@ -20,14 +21,12 @@ FEAT = [
     "sharp_angle_r","square_angle_r","wide_angle_r","linear_angle_r",
     "vertical_jump_r","perfect_overlap_r","true_linear_r",
 ]
-EXCLUDE = {"comfortable", "practise"}
-
 clf = ImprovedBeatmapClassifier()
 data = json.load(open("ml_dataset.json", encoding="utf-8"))
 
 X, tags_per_map, titles = [], [], []
 for s in data:
-    t = [x for x in (s.get("tags") or []) if x not in EXCLUDE]
+    t = apply_label_policy(s.get("tags") or [])
     if not t:
         continue
     sections = clf.split_beatmap_into_sections(s["hit_objects"])

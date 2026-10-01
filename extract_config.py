@@ -35,11 +35,24 @@ def extract_config(model_dir='.', out_path=None):
 
     print("Extracting math and tags...")
 
-    # Scikit-learn stores these as numpy arrays, we convert to standard Python lists
+    from mlops.labels import DISPLAY_DECIMALS, SUPPRESSED_BY, THRESHOLD
+    from mlops.split import model_feature_version
+
+    # Scikit-learn stores these as numpy arrays, we convert to standard Python lists.
+    #
+    # Beyond the scaler and tags, the app reads its decision rule from here rather
+    # than compiling it in: which extractor to run (feature_version), the cutoff
+    # (threshold, applied at display precision so a tag shown as 0.26 counts at
+    # 0.26), and which general tags to hide beside specific ones. A retune then
+    # ships as a new config file, not an app code change.
     config = {
         "scaler_mean": scaler.mean_.tolist(),
         "scaler_scale": scaler.scale_.tolist(),
-        "tags": binarizer.classes_.tolist()
+        "tags": binarizer.classes_.tolist(),
+        "feature_version": model_feature_version(model_dir),
+        "threshold": THRESHOLD,
+        "display_decimals": DISPLAY_DECIMALS,
+        "suppressed_by": {tag: list(by) for tag, by in SUPPRESSED_BY.items()},
     }
 
     print(f"Saving to {out_path}...")

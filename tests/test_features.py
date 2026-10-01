@@ -57,7 +57,7 @@ class TestConstants:
 
     def test_threshold_is_the_shipped_value(self):
         from ensemble_evaluator import THRESHOLD
-        assert THRESHOLD == 0.27
+        assert THRESHOLD == 0.26
 
 
 class TestExtractMeaningfulFeatures:

@@ -72,6 +72,66 @@ class OsuFileParser:
                 metadata[key.strip()] = value.strip()
         return metadata
 
+    def _section_lines(self, header):
+        """The non-empty, non-comment lines of one section, e.g. '[Difficulty]'."""
+        lines, inside = [], False
+        for line in self.lines:
+            line = line.strip()
+            if line.startswith('[') and line.endswith(']'):
+                inside = line == header
+                continue
+            if inside and line and not line.startswith('//'):
+                lines.append(line)
+        return lines
+
+    def get_difficulty(self):
+        """
+        Extracts the [Difficulty] section as floats.
+
+        Returns:
+            dict: e.g. {'CircleSize': 4.0, 'ApproachRate': 9.0,
+                  'OverallDifficulty': 8.0, 'SliderMultiplier': 1.4, ...}.
+                  Very old maps have no ApproachRate line; the game uses
+                  OverallDifficulty for it there, and so does this.
+        """
+        difficulty = {}
+        for line in self._section_lines('[Difficulty]'):
+            if ':' in line:
+                key, value = line.split(':', 1)
+                try:
+                    difficulty[key.strip()] = float(value)
+                except ValueError:
+                    continue
+        if 'ApproachRate' not in difficulty and 'OverallDifficulty' in difficulty:
+            difficulty['ApproachRate'] = difficulty['OverallDifficulty']
+        return difficulty
+
+    def get_timing_points(self):
+        """
+        Extracts the [TimingPoints] section.
+
+        Uninherited ("red") points set the beat length in milliseconds.
+        Inherited ("green") points carry a negative value that sets slider
+        velocity as -100 / value. Very old files have no uninherited column, and
+        there a negative value is what marks an inherited point.
+
+        Returns:
+            list: (time_ms, beat_length, uninherited) tuples, stably sorted by
+                  time so points sharing a timestamp keep their file order.
+        """
+        points = []
+        for line in self._section_lines('[TimingPoints]'):
+            parts = line.split(',')
+            try:
+                time = float(parts[0])
+                beat_length = float(parts[1])
+            except (ValueError, IndexError):
+                continue
+            uninherited = parts[6].strip() == '1' if len(parts) >= 7 else beat_length > 0
+            points.append((time, beat_length, uninherited))
+        points.sort(key=lambda p: p[0])
+        return points
+
     def find_hit_objects_section(self):
         """
         Locates and returns the lines belonging to the [HitObjects] section.

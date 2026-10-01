@@ -11,7 +11,7 @@ import pickle
 
 import numpy as np
 
-from ensemble_evaluator import THRESHOLD
+from mlops.labels import THRESHOLD
 
 MODEL_GLOB = 'ensemble_model_%d.keras'
 SCALER_NAME = 'ensemble_scaler.pkl'
@@ -73,22 +73,39 @@ def score_on_holdout(model_dir, prepared, split, threshold=THRESHOLD, num_models
     """
     Score one model directory on the fixed holdout.
 
-    Refuses to score a model whose label space differs from the dataset's. Such
-    a comparison looks fine numerically and is meaningless: column 7 would be a
-    different tag for each model. Failing loudly here is the whole reason the
-    gate can be trusted.
+    A model trained under an older label policy (labels.py) is scored on the
+    CURRENT label space: tags the policy drops are discarded and merged tags
+    take the max of their members, so an old champion and a new candidate answer
+    the same question. Any label difference the policy does not explain is still
+    refused. Such a comparison looks fine numerically and is meaningless:
+    column 7 would be a different tag for each model. Failing loudly here is the
+    whole reason the gate can be trusted.
     """
+    from mlops.labels import project_probabilities
     from mlops.metrics_report import evaluate_probabilities
 
     models, scaler, binarizer = load_ensemble(model_dir, num_models)
 
     model_classes = list(binarizer.classes_)
-    if model_classes != list(prepared.classes):
+    try:
+        projection = project_probabilities(model_classes, prepared.classes)
+    except ValueError as e:
         raise ValueError(
-            "Label space mismatch: %s has %d labels, dataset has %d. "
-            "These models were trained on a different label vocabulary, so their "
-            "scores are not comparable. Retrain the candidate on this dataset."
-            % (model_dir, len(model_classes), len(prepared.classes)))
+            "Label space mismatch: %s has %d labels, dataset has %d, and %s. "
+            "Retrain the candidate on this dataset."
+            % (model_dir, len(model_classes), len(prepared.classes), e))
+    if not projection.identity:
+        print("[labels] Scoring %s (%d labels) on the current %d-label space: %s"
+              % (model_dir, len(model_classes), len(prepared.classes), projection))
+
+    from mlops.split import model_feature_version
+
+    version = model_feature_version(model_dir)
+    if version != prepared.feature_version:
+        raise ValueError(
+            "Feature version mismatch: %s was trained on v%d features but the "
+            "dataset was prepared with v%d. Prepare it with feature_version=%d."
+            % (model_dir, version, prepared.feature_version, version))
 
     expected_features = getattr(scaler, 'n_features_in_', None)
     if expected_features is not None and expected_features != prepared.X.shape[1]:
@@ -99,10 +116,11 @@ def score_on_holdout(model_dir, prepared, split, threshold=THRESHOLD, num_models
     X_holdout = prepared.X[split.test_idx]
     y_holdout = prepared.y[split.test_idx]
 
-    probs = ensemble_probabilities(models, scaler, X_holdout)
+    probs = projection.apply(ensemble_probabilities(models, scaler, X_holdout))
     summary, per_tag = evaluate_probabilities(
         y_holdout, probs, prepared.classes, threshold=threshold)
 
+    summary['label_projection'] = str(projection)
     summary['model_dir'] = model_dir
     summary['num_models'] = len(models)
     summary['split_hash'] = split.split_hash
