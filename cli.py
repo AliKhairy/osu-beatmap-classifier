@@ -10,7 +10,7 @@ This file exposes the same operations as named subcommands with flags, so every
 answer main.py would have asked for is supplied up front:
 
     python cli.py train-ensemble --models 5
-    python cli.py evaluate --max-maps 50 --threshold 0.27
+    python cli.py evaluate --max-maps 50 --threshold 0.26
 
 It deliberately contains NO logic of its own - every subcommand is a thin call
 into the same functions main.py uses. If behaviour differs between the two,
@@ -29,6 +29,9 @@ import sys
 # tensorflow is imported anywhere, which is why it sits at module top.
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
 
+# Light import (numpy only): the one threshold every subcommand defaults to.
+from mlops.labels import THRESHOLD  # noqa: E402
+
 
 # --- Subcommand implementations -------------------------------------------
 #
@@ -38,7 +41,7 @@ os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
 
 def cmd_build_dataset(args):
     """Scrape map metadata + .osu files from the APIs and write ml_dataset.json."""
-    from dataset_builder import build_full_dataset, save_dataset
+    from osu_tagger.data.builder import build_full_dataset, save_dataset
 
     print(f"Building dataset: {args.max_maps} maps starting at offset {args.offset}")
     data = build_full_dataset(max_maps=args.max_maps, offset=args.offset)
@@ -54,7 +57,7 @@ def cmd_build_dataset(args):
 
 def cmd_rebuild(args):
     """Re-parse the already-downloaded .osu files in downloads/ into a dataset."""
-    from rebuild_from_downloaded import rebuild
+    from osu_tagger.data.rebuild import rebuild
 
     # rebuild() used to return None whatever happened - missing token, empty
     # downloads/, nothing matched - and this returned 0 regardless. A scripted
@@ -67,9 +70,35 @@ def cmd_rebuild(args):
     return 0
 
 
+def cmd_enrich_dataset(args):
+    """Parse difficulty + timing points from downloads/ into map_meta.json (no network)."""
+    from osu_tagger.data.map_meta import build_map_meta
+
+    if not os.path.exists(args.dataset):
+        print(f"Dataset not found: {args.dataset}.")
+        return 1
+    if not os.path.isdir(args.downloads):
+        print(f"Downloads folder not found: {args.downloads}")
+        return 1
+
+    report = build_map_meta(args.dataset, args.downloads, args.out)
+    print(f"Covered {report['n_covered']} of {report['n_dataset']} maps -> {report['out_path']}")
+    if report['missing']:
+        print(f"  {len(report['missing'])} map(s) have no .osu file and will use default "
+              f"difficulty/timing: {report['missing'][:10]}")
+    if report['object_count_mismatch']:
+        print(f"  {len(report['object_count_mismatch'])} map(s) have a different object count "
+              f"in downloads/ than in the dataset (updated after scraping?): "
+              f"{report['object_count_mismatch'][:10]}")
+    if report['n_covered'] == 0:
+        print("No maps covered - refusing to call this a success.")
+        return 1
+    return 0
+
+
 def cmd_train(args):
     """Train the single model and save beatmap_classifier.pkl."""
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     if not os.path.exists(args.dataset):
         print(f"Dataset not found: {args.dataset}. Run build-dataset or rebuild first.")
@@ -81,7 +110,7 @@ def cmd_train(args):
 
 def cmd_train_ensemble(args):
     """Train the N-model ensemble that the shipped ONNX files come from."""
-    from ensemble_evaluator import train_and_evaluate_ensemble
+    from osu_tagger.training.ensemble import train_and_evaluate_ensemble
 
     if not os.path.exists(args.dataset):
         print(f"Dataset not found: {args.dataset}. Run build-dataset or rebuild first.")
@@ -96,7 +125,8 @@ def cmd_train_ensemble(args):
         dataset=args.dataset,
         epochs=args.epochs,
         train_seed=args.train_seed,
-        out_dir=args.out_dir)
+        out_dir=args.out_dir,
+        feature_version=args.feature_version)
 
     if result is None:
         print("Training failed - no models were produced.")
@@ -108,14 +138,27 @@ def cmd_train_ensemble(args):
 
 def cmd_export_onnx(args):
     """Convert the trained .keras models to the .onnx files the WPF app loads."""
-    from export_to_onnx import convert_models
-    from extract_config import extract_config
+    from osu_tagger.export.onnx import convert_models
+    from osu_tagger.export.config import extract_config
 
     model_dir = args.model_dir
     out_dir = args.out_dir or model_dir
 
     if not os.path.exists(os.path.join(model_dir, 'ensemble_model_1.keras')):
         print(f"No trained ensemble found in {model_dir}. Run train-ensemble first.")
+        return 1
+
+    # A v2 model only works in an app build that has FeatureExtractorV2.cs (it
+    # picks the extractor from model_config.json's feature_version). App releases
+    # before that compute v1 and would reject the vector length at best. So a
+    # non-v1 export has to be asked for explicitly.
+    from mlops.split import model_feature_version
+    version = model_feature_version(model_dir)
+    allowed = getattr(args, 'allow_feature_version', None)
+    if version != 1 and version != allowed:
+        print(f"{model_dir} holds a v{version}-feature model. Only app builds that include "
+              f"FeatureExtractorV2.cs can run it; if the build you ship does, pass "
+              f"--allow-feature-version {version}.")
         return 1
 
     convert_models(model_dir=model_dir, out_dir=out_dir)
@@ -148,7 +191,7 @@ def cmd_export_onnx(args):
 
 def cmd_predict(args):
     """Predict tags for one .osu file and print them."""
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     if not os.path.exists(args.map):
         print(f"Map not found: {args.map}")
@@ -157,7 +200,7 @@ def cmd_predict(args):
     classifier = ImprovedBeatmapClassifier()
 
     if os.path.exists('ensemble_model_1.keras'):
-        from ensemble_evaluator import load_ensemble_assets, predict_with_ensemble
+        from osu_tagger.training.ensemble import load_ensemble_assets, predict_with_ensemble
         assets = load_ensemble_assets()
         tags = predict_with_ensemble(args.map, args.threshold, assets, classifier)
     else:
@@ -169,7 +212,7 @@ def cmd_predict(args):
 
 def cmd_evaluate(args):
     """Run predictions over a folder of maps - the closest thing to a test."""
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     # --holdout is the measured path: score a model on the fixed evaluation
     # split and record the numbers. Without it this command behaves exactly as
@@ -184,7 +227,7 @@ def cmd_evaluate(args):
         return 1
 
     if os.path.exists('ensemble_model_1.keras'):
-        from ensemble_evaluator import test_multiple_maps_with_ensemble
+        from osu_tagger.training.ensemble import test_multiple_maps_with_ensemble
         test_multiple_maps_with_ensemble(max_maps=args.max_maps, threshold=args.threshold)
     else:
         ImprovedBeatmapClassifier().test_multiple_maps(
@@ -205,7 +248,8 @@ def _evaluate_holdout(args):
         print(f"No ensemble_model_*.keras found in: {args.model_dir}")
         return 1
 
-    prepared = split_mod.prepare_dataset(args.dataset)
+    prepared = split_mod.prepare_dataset(
+        args.dataset, feature_version=split_mod.model_feature_version(args.model_dir))
     sp = split_mod.fixed_split(prepared)
     split_mod.write_split_manifest(prepared, sp)
 
@@ -233,6 +277,7 @@ def _evaluate_holdout(args):
             'test_size': sp.test_size,
             'threshold': args.threshold,
             'n_features': int(prepared.X.shape[1]),
+            'feature_version': prepared.feature_version,
             'n_labels': len(prepared.classes),
             'dataset': args.dataset,
             'dataset_sha256': prepared.dataset_sha,
@@ -277,7 +322,18 @@ def cmd_promote(args):
     elif args.reference_micro_f1 <= 0:
         args.reference_micro_f1 = None
 
-    prepared = split_mod.prepare_dataset(args.dataset)
+    # Each model is scored on the features it was trained on - a v2 candidate
+    # can be gated against a v1 champion - but always on the same holdout rows.
+    prepared_by_version = {}
+
+    def prepared_for(model_dir):
+        version = split_mod.model_feature_version(model_dir)
+        if version not in prepared_by_version:
+            prepared_by_version[version] = split_mod.prepare_dataset(
+                args.dataset, feature_version=version)
+        return prepared_by_version[version]
+
+    prepared = prepared_for(args.candidate)
     sp = split_mod.fixed_split(prepared)
 
     print(f"Scoring candidate on the fixed split ({len(sp.test_idx)} maps, "
@@ -302,8 +358,15 @@ def cmd_promote(args):
               f"stored macro_f1={stored_f1}")
         try:
             champion_dir = registry.download_champion_ensemble()
+            champion_prepared = prepared_for(champion_dir)
+            champion_sp = split_mod.fixed_split(champion_prepared)
+            if (champion_prepared.ids != prepared.ids
+                    or champion_sp.split_hash != sp.split_hash):
+                raise ValueError(
+                    "the champion's feature version keeps different rows, so it "
+                    "would be scored on a different holdout")
             champion_summary, _, _ = score_on_holdout(
-                champion_dir, prepared, sp, threshold=args.threshold)
+                champion_dir, champion_prepared, champion_sp, threshold=args.threshold)
             print(f"Champion re-scored on this split: {format_summary(champion_summary)}")
         except Exception as e:                      # noqa: BLE001
             print(f"Could not re-score the champion: {e}")
@@ -347,6 +410,7 @@ def cmd_promote(args):
         params={
             'split_seed': sp.seed,
             'threshold': args.threshold,
+            'feature_version': prepared.feature_version,
             'dataset_sha256': prepared.dataset_sha,
             'split_hash': sp.split_hash,
             'tolerance': tolerance,
@@ -370,9 +434,16 @@ def cmd_promote(args):
         os.makedirs(root, exist_ok=True)
         copied = []
         for name in sorted(os.listdir(args.candidate)):
-            if name.endswith('.keras') or name.endswith('.pkl'):
+            if (name.endswith('.keras') or name.endswith('.pkl')
+                    or name == split_mod.FEATURE_META_NAME):
                 shutil.copy2(os.path.join(args.candidate, name), os.path.join(root, name))
                 copied.append(name)
+        # A candidate from before feature versions were recorded is v1. Leaving
+        # the previous champion's feature_meta.json behind would label these
+        # models with the wrong feature version.
+        stale_meta = os.path.join(root, split_mod.FEATURE_META_NAME)
+        if split_mod.FEATURE_META_NAME not in copied and os.path.exists(stale_meta):
+            os.remove(stale_meta)
         print(f"Copied {len(copied)} artifact(s) into {os.path.abspath(root)}")
     return 0
 
@@ -431,6 +502,19 @@ def cmd_drift(args):
     return 0
 
 
+def cmd_tag_probabilities(args):
+    """Every tag's probability for every map in a folder, from one or more models."""
+    from tools.map_probabilities import run
+    return run(args)
+
+
+def cmd_threshold_sweep(args):
+    """Precision / recall / F1 at every threshold, on a dev split of the training rows."""
+    from tools.feature_probe import run
+    args.sweep = True
+    return run(args)
+
+
 def cmd_pipeline(args):
     """Run the whole train -> evaluate -> gate -> export flow with Prefect."""
     from flows.pipeline import training_pipeline
@@ -440,6 +524,7 @@ def cmd_pipeline(args):
         models=args.models,
         epochs=args.epochs,
         train_seed=args.train_seed,
+        feature_version=args.feature_version,
         tolerance=args.tolerance,
         threshold=args.threshold,
         candidate_dir=args.candidate_dir,
@@ -477,6 +562,14 @@ def build_parser():
     p = sub.add_parser('rebuild', help='Rebuild ml_dataset.json from the local downloads/ folder (no network)')
     p.set_defaults(func=cmd_rebuild)
 
+    p = sub.add_parser('enrich-dataset',
+                       help='Add difficulty + timing points from downloads/ to map_meta.json '
+                            '(no network; needed for v2 features)')
+    p.add_argument('--dataset', default='ml_dataset.json')
+    p.add_argument('--downloads', default='downloads', help='Folder of downloaded .osu files')
+    p.add_argument('--out', default='map_meta.json')
+    p.set_defaults(func=cmd_enrich_dataset)
+
     p = sub.add_parser('train', help='Train the single model')
     p.add_argument('--dataset', default='ml_dataset.json')
     p.set_defaults(func=cmd_train)
@@ -493,6 +586,9 @@ def build_parser():
                    help='Where to write models, scaler and binarizer. Use '
                         'candidates/<name> to train without touching the models '
                         'currently in the repo root (default: .)')
+    p.add_argument('--feature-version', type=int, default=1, choices=(1, 2),
+                   help='1 = the 90-feature vector the app computes; 2 = features_v2, '
+                        'which the app cannot run yet (default: 1)')
     p.set_defaults(func=cmd_train_ensemble)
 
     p = sub.add_parser('export-onnx',
@@ -500,18 +596,22 @@ def build_parser():
                             'model_config.json the app loads')
     p.add_argument('--model-dir', default='.', help='Where the .keras models live (default: .)')
     p.add_argument('--out-dir', default=None, help='Where to write outputs (default: --model-dir)')
+    p.add_argument('--allow-feature-version', type=int, default=None,
+                   help='Export a non-v1 model anyway. Only once the app computes that '
+                        'feature version.')
     p.set_defaults(func=cmd_export_onnx)
 
     p = sub.add_parser('predict', help='Predict tags for a single .osu file')
     p.add_argument('--map', required=True, help='Path to a .osu file')
-    p.add_argument('--threshold', type=float, default=0.27, help='Confidence cutoff (default: 0.27)')
+    p.add_argument('--threshold', type=float, default=THRESHOLD,
+                   help='Confidence cutoff (default: %(default)s; a tag shown at it counts)')
     p.set_defaults(func=cmd_predict)
 
     p = sub.add_parser('evaluate', help='Run predictions across a folder of maps, '
                                         'or score a model on the fixed split with --holdout')
     p.add_argument('--songs', default='songs', help='Folder of .osu files (default: songs)')
     p.add_argument('--max-maps', type=int, default=10)
-    p.add_argument('--threshold', type=float, default=0.27)
+    p.add_argument('--threshold', type=float, default=THRESHOLD)
     p.add_argument('--holdout', action='store_true',
                    help='Score a model on the fixed evaluation split and report '
                         'micro/macro F1 instead of printing per-map tags')
@@ -525,7 +625,7 @@ def build_parser():
                                        'promote it only if quality holds up')
     p.add_argument('--candidate', required=True, help='Directory holding the candidate ensemble')
     p.add_argument('--dataset', default='ml_dataset.json')
-    p.add_argument('--threshold', type=float, default=0.27)
+    p.add_argument('--threshold', type=float, default=THRESHOLD)
     p.add_argument('--tolerance', type=float, default=None,
                    help='How much lower than the baseline micro F1 is acceptable. '
                         'Defaults to the measured value in mlops/promote.py '
@@ -551,14 +651,32 @@ def build_parser():
     p.add_argument('--no-log', action='store_true', help='Skip MLflow logging')
     p.set_defaults(func=cmd_drift)
 
+    # Both tools keep their own argument definitions, so `python -m tools.X` and
+    # these subcommands cannot drift apart. Their modules import only numpy at
+    # the top, so --help stays fast.
+    from tools import feature_probe, map_probabilities
+
+    p = sub.add_parser('tag-probabilities',
+                       help="Every tag's probability for every map in a folder, from one or "
+                            "more models, with the community's tags where known")
+    map_probabilities.add_arguments(p)
+    p.set_defaults(func=cmd_tag_probabilities)
+
+    p = sub.add_parser('threshold-sweep',
+                       help='Precision / recall / F1 and tags per map at thresholds 0.10-0.60, '
+                            'measured on a dev split of the training rows (holdout untouched)')
+    feature_probe.add_arguments(p, sweep=True)
+    p.set_defaults(func=cmd_threshold_sweep)
+
     p = sub.add_parser('pipeline', help='Run train -> evaluate -> promote -> export '
                                         'as one Prefect flow')
     p.add_argument('--dataset', default='ml_dataset.json')
     p.add_argument('--models', type=int, default=5)
     p.add_argument('--epochs', type=int, default=100)
     p.add_argument('--train-seed', type=int, default=None)
+    p.add_argument('--feature-version', type=int, default=1, choices=(1, 2))
     p.add_argument('--tolerance', type=float, default=None)
-    p.add_argument('--threshold', type=float, default=0.27)
+    p.add_argument('--threshold', type=float, default=THRESHOLD)
     p.add_argument('--candidate-dir', default=None,
                    help='Where to train the candidate (default: candidates/<timestamp>)')
     p.add_argument('--root-dir', default='.',

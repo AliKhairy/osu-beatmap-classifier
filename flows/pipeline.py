@@ -22,10 +22,12 @@ from datetime import datetime
 
 from prefect import flow, get_run_logger, task
 
+from mlops.labels import THRESHOLD
+
 
 @task(name='build-dataset')
 def build_dataset_task(max_maps, output):
-    from dataset_builder import build_full_dataset, save_dataset
+    from osu_tagger.data.builder import build_full_dataset, save_dataset
 
     logger = get_run_logger()
     logger.info("Scraping up to %d maps into %s", max_maps, output)
@@ -38,15 +40,15 @@ def build_dataset_task(max_maps, output):
 
 
 @task(name='train-ensemble')
-def train_task(dataset, models, epochs, train_seed, candidate_dir):
-    from ensemble_evaluator import train_and_evaluate_ensemble
+def train_task(dataset, models, epochs, train_seed, candidate_dir, feature_version=1):
+    from osu_tagger.training.ensemble import train_and_evaluate_ensemble
 
     logger = get_run_logger()
     logger.info("Training %d model(s) for %d epoch(s) into %s",
                 models, epochs, candidate_dir)
     result = train_and_evaluate_ensemble(
         num_models=models, dataset=dataset, epochs=epochs,
-        train_seed=train_seed, out_dir=candidate_dir)
+        train_seed=train_seed, out_dir=candidate_dir, feature_version=feature_version)
     if result is None:
         raise RuntimeError("Training produced no models")
     return result
@@ -60,7 +62,8 @@ def evaluate_task(candidate_dir, dataset, threshold):
     from mlops.tracking import log_evaluation
 
     logger = get_run_logger()
-    prepared = split_mod.prepare_dataset(dataset)
+    prepared = split_mod.prepare_dataset(
+        dataset, feature_version=split_mod.model_feature_version(candidate_dir))
     sp = split_mod.fixed_split(prepared)
     summary, per_tag, _ = score_on_holdout(candidate_dir, prepared, sp, threshold=threshold)
     logger.info("Candidate on fixed split: %s", format_summary(summary))
@@ -114,7 +117,8 @@ def export_task(root_dir):
     import cli
 
     logger = get_run_logger()
-    args = argparse.Namespace(model_dir=root_dir, out_dir=root_dir)
+    args = argparse.Namespace(model_dir=root_dir, out_dir=root_dir,
+                              allow_feature_version=None)
     code = cli.cmd_export_onnx(args)
     if code != 0:
         raise RuntimeError("ONNX export failed with exit code %d" % code)
@@ -127,8 +131,8 @@ def export_task(root_dir):
 
 @flow(name='osu-tagger-training')
 def training_pipeline(dataset='ml_dataset.json', models=5, epochs=100, train_seed=None,
-                      tolerance=None, threshold=0.27, candidate_dir=None, root_dir='.',
-                      build_dataset=False, max_maps=5000):
+                      tolerance=None, threshold=THRESHOLD, candidate_dir=None, root_dir='.',
+                      build_dataset=False, max_maps=5000, feature_version=1):
     logger = get_run_logger()
 
     if candidate_dir is None:
@@ -138,7 +142,7 @@ def training_pipeline(dataset='ml_dataset.json', models=5, epochs=100, train_see
     if build_dataset:
         dataset = build_dataset_task(max_maps, dataset)
 
-    train_task(dataset, models, epochs, train_seed, candidate_dir)
+    train_task(dataset, models, epochs, train_seed, candidate_dir, feature_version)
     macro_f1 = evaluate_task(candidate_dir, dataset, threshold)
     logger.info("Candidate macro F1: %.4f", macro_f1)
 

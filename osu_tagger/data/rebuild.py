@@ -1,4 +1,4 @@
-# rebuild_from_downloaded.py
+# osu_tagger/data/rebuild.py (was rebuild_from_downloaded.py)
 """
 This script rebuilds the 'ml_dataset.json' from a collection of local .osu files.
 
@@ -17,10 +17,10 @@ curating the data from a specific collection of beatmaps.
 import os
 import time
 from dotenv import load_dotenv
-from osu_parser import OsuFileParser
-from echosu_api import EchoOsuAPI
-from tag_scraper import tag_counts, filter_tags
-from dataset_builder import save_dataset
+from osu_tagger.parsing import OsuFileParser
+from osu_tagger.data.echosu import EchoOsuAPI
+from osu_tagger.data.tags import tag_counts, filter_tags
+from osu_tagger.data.builder import save_dataset
 
 # --- Configuration ---
 # Load environment variables from the .env file (e.g., for API keys).

@@ -2,7 +2,7 @@
 The single source of truth for turning a dataset into a train/holdout split.
 
 Why this file exists: the evaluation set used to be an implementation detail
-buried in ensemble_evaluator.py - a `train_test_split(..., random_state=42)`
+buried in the ensemble trainer - a `train_test_split(..., random_state=42)`
 whose result nothing recorded. That is reproducible only as long as nobody
 notices, because the split is POSITIONAL: it selects rows out of whatever order
 the dataset happened to be in. Rebuild ml_dataset.json, or reorder it, and the
@@ -32,8 +32,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from mlops.labels import apply_label_policy
+
 # The seed that defines the evaluation set. This is frozen. It is NOT a tuning
-# knob, and it is NOT the training seed - see train_seed in ensemble_evaluator,
+# knob, and it is NOT the training seed - see train_seed in osu_tagger.training.ensemble,
 # which varies weight init while this stays put. Changing this value invalidates
 # every metric already in the registry, because they would no longer describe
 # the same holdout.
@@ -51,9 +53,10 @@ class Prepared:
     y: np.ndarray            # (n, n_labels) binary
     classes: list            # label names, binarizer order
     ids: list                # beatmap_id per row, same order as X
-    tag_lists: list          # raw tags per row, for re-binarising elsewhere
+    tag_lists: list          # labels per row after the label policy, for re-binarising elsewhere
     dataset_sha: str
     source_path: str
+    feature_version: int = 1  # which extractor produced X - see feature_names_for()
 
 
 @dataclass
@@ -80,10 +83,10 @@ def _extract_from_json(path):
     Re-implements exactly the loop in train_and_evaluate_ensemble: keep samples
     that have both tags and hit_objects, split into sections, aggregate. The
     filter conditions matter - `tags and hit_objects` here vs `tags` alone in
-    neural_model.train() is why those two produce different row counts.
+    features.v1 ImprovedBeatmapClassifier.train() is why those two produce different row counts.
     """
     os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
-    from neural_model import ImprovedBeatmapClassifier
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
 
     classifier = ImprovedBeatmapClassifier()
     with open(path, 'r', encoding='utf-8') as f:
@@ -103,37 +106,120 @@ def _extract_from_json(path):
     return np.array(X), tag_lists, ids
 
 
-def _extract_from_csv(path):
+def _extract_from_json_v2(path, meta_path):
+    """
+    v2 features for the SAME rows _extract_from_json keeps, in the same order.
+
+    The row filter is deliberately v1's - tags, hit objects, and at least one
+    playable section by v1's splitter - even though v2 never uses sections. The
+    evaluation split is positional, so a v2 extractor that kept one extra map
+    or dropped one would silently produce a different holdout, and a v1-vs-v2
+    comparison would be scored on two different test sets.
+
+    Difficulty and timing points come from the map_meta.json sidecar; a map
+    missing from it falls back to the defaults in features_v2.
+    """
+    os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+    from osu_tagger.features.v2 import extract_features_v2
+    from osu_tagger.data.map_meta import load_map_meta
+    from osu_tagger.features.v1 import ImprovedBeatmapClassifier
+
+    classifier = ImprovedBeatmapClassifier()
+    meta = load_map_meta(meta_path)
+    with open(path, 'r', encoding='utf-8') as f:
+        dataset = json.load(f)
+
+    X, tag_lists, ids, no_meta = [], [], [], 0
+    for sample in dataset:
+        if sample.get('tags') and sample.get('hit_objects'):
+            if not classifier.split_beatmap_into_sections(sample['hit_objects']):
+                continue
+            bid = str(sample.get('beatmap_id', 'row%d' % len(ids)))
+            m = meta.get(bid)
+            no_meta += m is None
+            X.append(extract_features_v2(
+                sample['hit_objects'],
+                m['difficulty'] if m else None,
+                m['timing_points'] if m else None))
+            tag_lists.append(sample['tags'])
+            ids.append(bid)
+    print("[split] v2 features for %d rows; %d had no map_meta entry and used defaults"
+          % (len(ids), no_meta))
+    return np.array(X), tag_lists, ids
+
+
+# Written into every trained model directory, so anything that scores or
+# serves the model later knows which extractor its inputs must come from.
+FEATURE_META_NAME = 'feature_meta.json'
+
+
+def write_feature_meta(model_dir, version, n_features):
+    path = os.path.join(model_dir, FEATURE_META_NAME)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump({'feature_version': version, 'n_features': int(n_features),
+                   'feature_names': feature_names_for(version)}, f, indent=2)
+    return path
+
+
+def model_feature_version(model_dir):
+    """
+    The feature version a model directory was trained on. Directories from
+    before versions were recorded hold v1 models - the only extractor there was.
+    """
+    path = os.path.join(model_dir, FEATURE_META_NAME)
+    if not os.path.exists(path):
+        return 1
+    with open(path, 'r', encoding='utf-8') as f:
+        return int(json.load(f)['feature_version'])
+
+
+def feature_names_for(version):
+    """Column names of the vector each feature version produces."""
+    if version == 1:
+        from osu_tagger.features.v1 import FEATURE_NAMES
+        return list(FEATURE_NAMES)
+    if version == 2:
+        from osu_tagger.features.v2 import FEATURE_NAMES_V2
+        return list(FEATURE_NAMES_V2)
+    raise ValueError("Unknown feature version %r (known: 1, 2)" % version)
+
+
+def _extract_from_csv(path, feature_version=1):
     """
     Load already-extracted feature vectors. This is what lets samples/ ship a
     runnable dataset without redistributing .osu files: the CSV holds derived
     statistics and tags, never beatmap content.
 
-    Column contract: beatmap_id, tags (semicolon-joined), then the 90 feature
-    columns named by neural_model.FEATURE_NAMES, in that order.
+    Column contract: beatmap_id, tags (semicolon-joined), then the feature
+    columns named by feature_names_for(feature_version), in that order.
     """
     import pandas as pd
-    from neural_model import FEATURE_NAMES
 
+    names = feature_names_for(feature_version)
     df = pd.read_csv(path)
-    missing = [c for c in FEATURE_NAMES if c not in df.columns]
+    missing = [c for c in names if c not in df.columns]
     if missing:
         raise ValueError(
             "%s is missing %d feature column(s), first few: %s"
             % (path, len(missing), missing[:5]))
 
-    X = df[FEATURE_NAMES].to_numpy(dtype=float)
+    X = df[names].to_numpy(dtype=float)
     tag_lists = [[t for t in str(s).split(';') if t] for s in df['tags']]
     ids = [str(i) for i in df['beatmap_id']]
     return X, tag_lists, ids
 
 
-def prepare_dataset(path='ml_dataset.json', use_cache=True, cache_dir=CACHE_DIR):
+def prepare_dataset(path='ml_dataset.json', use_cache=True, cache_dir=CACHE_DIR,
+                    feature_version=1, meta_path=None):
     """
     Dataset file -> features, labels, ids. Cached on the dataset content hash, so
     re-running evaluate or promote does not pay the ~45s extraction again. The
     cache key is the file sha256, which means an edited dataset can never
     silently reuse stale features.
+
+    feature_version picks the extractor: 1 is the shipped 90-feature vector
+    (osu_tagger.features.v1), 2 is osu_tagger.features.v2. v2 also reads the map_meta.json sidecar
+    (meta_path), whose hash joins the cache key for the same reason.
     """
     from sklearn.preprocessing import MultiLabelBinarizer
 
@@ -141,7 +227,24 @@ def prepare_dataset(path='ml_dataset.json', use_cache=True, cache_dir=CACHE_DIR)
         raise FileNotFoundError("Dataset not found: %s" % path)
 
     sha = dataset_sha256(path)
-    cache_path = os.path.join(cache_dir, 'features_%s.npz' % sha[:16])
+    if feature_version == 1:
+        cache_path = os.path.join(cache_dir, 'features_%s.npz' % sha[:16])
+    elif feature_version == 2:
+        from osu_tagger.data.map_meta import META_PATH
+        meta_path = meta_path or META_PATH
+        if not path.lower().endswith('.csv') and not os.path.exists(meta_path):
+            raise FileNotFoundError(
+                "v2 features need %s. Run `python cli.py enrich-dataset` first." % meta_path)
+        meta_sha = dataset_sha256(meta_path) if os.path.exists(meta_path) else 'none'
+        # v2 is still being developed, so its own source joins the key: an edit
+        # to features/v2.py must never be answered with features cached from the
+        # previous version of it. (v1 is frozen, so its key never needed this.)
+        import osu_tagger.features.v2 as features_v2
+        code_sha = dataset_sha256(features_v2.__file__)
+        cache_path = os.path.join(
+            cache_dir, 'features_v2_%s_%s_%s.npz' % (sha[:16], meta_sha[:8], code_sha[:8]))
+    else:
+        raise ValueError("Unknown feature version %r (known: 1, 2)" % feature_version)
 
     X = tag_lists = ids = None
     if use_cache and os.path.exists(cache_path):
@@ -152,9 +255,12 @@ def prepare_dataset(path='ml_dataset.json', use_cache=True, cache_dir=CACHE_DIR)
         print("[split] Loaded %d cached feature rows from %s" % (X.shape[0], cache_path))
 
     if X is None:
-        print("[split] Extracting features from %s (no cache for %s)..." % (path, sha[:16]))
+        print("[split] Extracting v%d features from %s (no cache for %s)..."
+              % (feature_version, path, sha[:16]))
         if path.lower().endswith('.csv'):
-            X, tag_lists, ids = _extract_from_csv(path)
+            X, tag_lists, ids = _extract_from_csv(path, feature_version)
+        elif feature_version == 2:
+            X, tag_lists, ids = _extract_from_json_v2(path, meta_path)
         else:
             X, tag_lists, ids = _extract_from_json(path)
         if use_cache:
@@ -167,12 +273,43 @@ def prepare_dataset(path='ml_dataset.json', use_cache=True, cache_dir=CACHE_DIR)
     if X.size == 0:
         raise ValueError("No usable rows extracted from %s" % path)
 
+    # The label policy applies here, after the cache, so the cache holds the
+    # dataset's raw tags and never goes stale when the policy changes. It maps
+    # tags per row and removes none, so a map left with no labels keeps its row
+    # and the positional split below is untouched. See labels.py.
+    raw_count = sum(len(t) for t in tag_lists)
+    tag_lists = [apply_label_policy(t) for t in tag_lists]
+    print("[labels] policy kept %d of %d tag instances; %d maps now have no labels"
+          % (sum(len(t) for t in tag_lists), raw_count,
+             sum(1 for t in tag_lists if not t)))
+
     binarizer = MultiLabelBinarizer()
     y = binarizer.fit_transform(tag_lists)
 
     return Prepared(
         X=X, y=y, classes=list(binarizer.classes_), ids=ids,
-        tag_lists=tag_lists, dataset_sha=sha, source_path=path)
+        tag_lists=tag_lists, dataset_sha=sha, source_path=path,
+        feature_version=feature_version)
+
+
+def prepare_for_versions(path, versions, **kwargs):
+    """
+    The dataset prepared once per feature version, keyed by version.
+
+    Refuses if the versions disagree on which maps are rows, or in what order:
+    the split is positional, so that would mean each model is scored on a
+    different holdout while the numbers still look comparable.
+    """
+    prepared = {v: prepare_dataset(path, feature_version=v, **kwargs)
+                for v in sorted(set(versions))}
+    first = next(iter(prepared.values()))
+    for v, p in prepared.items():
+        if p.ids != first.ids:
+            raise ValueError(
+                "Feature versions %d and %d kept different rows from %s, so their "
+                "holdouts differ. Refusing to compare them."
+                % (first.feature_version, v, path))
+    return prepared
 
 
 def fixed_split(prepared, seed=SPLIT_SEED, test_size=TEST_SIZE):
@@ -221,7 +358,25 @@ def scale_all(prepared):
     """
     from sklearn.preprocessing import StandardScaler
     scaler = StandardScaler()
-    return scaler.fit_transform(prepared.X), scaler
+    X_scaled = scaler.fit_transform(prepared.X)
+
+    # One absurd value (a BPM of 5e301 from a trick timing point did exactly
+    # this) overflows a column's variance. Nothing raises: depending on the row
+    # count sklearn yields a NaN scale or quietly substitutes 1, and every model
+    # trained on it learns a constant output, which then scores as a merely bad
+    # model. Refuse instead. Standardising a finite column can never put a value
+    # further than sqrt(n - 1) from the mean, so anything beyond that is proof.
+    with np.errstate(invalid='ignore'):
+        z_max = np.abs(X_scaled).max(axis=0)
+    bad = (~(np.isfinite(scaler.mean_) & np.isfinite(scaler.scale_))
+           | ~np.isfinite(z_max) | (z_max > np.sqrt(len(X_scaled)) + 1))
+    if bad.any():
+        names = feature_names_for(prepared.feature_version)
+        raise ValueError(
+            "Feature column(s) %s have a non-finite mean or spread over %s; the "
+            "extractor produced an extreme value. Fix the feature, do not train on it."
+            % ([names[i] for i in np.flatnonzero(bad)][:10], prepared.source_path))
+    return X_scaled, scaler
 
 
 if __name__ == '__main__':
@@ -231,9 +386,11 @@ if __name__ == '__main__':
     ap.add_argument('--dataset', default='ml_dataset.json')
     ap.add_argument('--manifest', default=MANIFEST_PATH)
     ap.add_argument('--no-cache', action='store_true')
+    ap.add_argument('--feature-version', type=int, default=1, choices=(1, 2))
     a = ap.parse_args()
 
-    prep = prepare_dataset(a.dataset, use_cache=not a.no_cache)
+    prep = prepare_dataset(a.dataset, use_cache=not a.no_cache,
+                           feature_version=a.feature_version)
     sp = fixed_split(prep)
     m = write_split_manifest(prep, sp, a.manifest)
     print(json.dumps({k: v for k, v in m.items() if k != 'holdout_beatmap_ids'}, indent=2))

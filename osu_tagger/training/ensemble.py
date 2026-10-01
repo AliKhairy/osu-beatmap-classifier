@@ -4,17 +4,18 @@ import numpy as np
 import tensorflow as tf
 from sklearn.metrics import classification_report
 
-from neural_model import ImprovedBeatmapClassifier
-from osu_parser import OsuFileParser
+from osu_tagger.features.v1 import ImprovedBeatmapClassifier
+from osu_tagger.parsing import OsuFileParser
 
-# The confidence cutoff, named rather than scattered as a literal. This value is
-# baked into the deployed C# app's expectations and into every recorded metric,
-# so it is a constant to be read, not a parameter to be tuned here. Changing it
-# invalidates the numbers in the model registry.
-THRESHOLD = 0.27
+# The confidence cutoff and the rule that applies it live in mlops/labels.py,
+# imported here so existing `from osu_tagger.training.ensemble import THRESHOLD` keeps
+# working. It is written into model_config.json, which is where the app reads
+# it, and every recorded metric is measured at it - so it is a constant to be
+# read, not a parameter to be tuned here.
+from mlops.labels import THRESHOLD, predicted, suppress_redundant
 
 def train_and_evaluate_ensemble(num_models=5, dataset='ml_dataset.json', epochs=100,
-                                train_seed=None, out_dir='.'):
+                                train_seed=None, out_dir='.', feature_version=1):
     """
     Train the N-model ensemble.
 
@@ -36,6 +37,10 @@ def train_and_evaluate_ensemble(num_models=5, dataset='ml_dataset.json', epochs=
       out_dir     candidates now train into candidates/<name>/ and only reach
                   the repo root by being promoted, so a bad run cannot overwrite
                   the models the shipped app is using.
+      feature_version
+                  1 is the 90-feature vector the app computes; 2 is features_v2.
+                  Recorded in <out_dir>/feature_meta.json, so scoring and
+                  prediction feed the model the features it was trained on.
 
     Returns a dict describing the run so callers (the Prefect flow, the gate)
     can use the numbers instead of scraping stdout.
@@ -45,7 +50,7 @@ def train_and_evaluate_ensemble(num_models=5, dataset='ml_dataset.json', epochs=
     print(f"--- Starting {num_models}-Model Ensemble Training ---")
 
     try:
-        prepared = split_mod.prepare_dataset(dataset)
+        prepared = split_mod.prepare_dataset(dataset, feature_version=feature_version)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}")
         return None
@@ -67,6 +72,7 @@ def train_and_evaluate_ensemble(num_models=5, dataset='ml_dataset.json', epochs=
         pickle.dump(prepared_binarizer(prepared), f)
     split_mod.write_split_manifest(
         prepared, sp, os.path.join(out_dir, 'split_manifest.json'))
+    split_mod.write_feature_meta(out_dir, feature_version, X_scaled.shape[1])
 
     if train_seed is not None:
         # Seeds python, numpy and tensorflow together. Note this makes the run
@@ -76,25 +82,10 @@ def train_and_evaluate_ensemble(num_models=5, dataset='ml_dataset.json', epochs=
         print(f"Training seed: {train_seed} (evaluation split seed stays {sp.seed})")
 
     trained_models = []
-    input_shape = X_train.shape[1]
-    output_shape = y_train.shape[1]
 
     for i in range(num_models):
         print(f"\n>>> Training Model {i+1}/{num_models} <<<")
-        model = tf.keras.Sequential([
-            tf.keras.layers.Dense(128, activation='relu', input_shape=(input_shape,)),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.Dense(output_shape, activation='sigmoid')
-        ])
-
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)
-
-        model.fit(X_train, y_train, epochs=epochs, batch_size=32,
-                  validation_split=0.2, callbacks=[early_stopping], verbose=0)
+        model = train_member(X_train, y_train, epochs)
 
         model_filename = os.path.join(out_dir, f'ensemble_model_{i+1}.keras')
         model.save(model_filename)
@@ -105,7 +96,7 @@ def train_and_evaluate_ensemble(num_models=5, dataset='ml_dataset.json', epochs=
     all_predictions = [model.predict(X_test, verbose=0) for model in trained_models]
     averaged_probabilities = np.mean(all_predictions, axis=0)
 
-    final_binary_predictions = (averaged_probabilities >= THRESHOLD).astype(int)
+    final_binary_predictions = predicted(averaged_probabilities, THRESHOLD).astype(int)
 
     print("\n" + "="*50)
     print(f"ENSEMBLE ({num_models} MODELS) CLASSIFICATION REPORT")
@@ -120,10 +111,34 @@ def train_and_evaluate_ensemble(num_models=5, dataset='ml_dataset.json', epochs=
         'dataset': dataset,
         'dataset_sha256': prepared.dataset_sha,
         'split_hash': sp.split_hash,
+        'feature_version': feature_version,
         'n_train': int(len(sp.train_idx)),
         'n_holdout': int(len(sp.test_idx)),
         'classes': list(classes),
     }
+
+
+def train_member(X_train, y_train, epochs=100):
+    """
+    Train ONE ensemble member. Factored out so tools/feature_probe.py measures
+    candidate features with exactly the network the shipped ensemble uses,
+    rather than a look-alike that could drift from it.
+    """
+    model = tf.keras.Sequential([
+        tf.keras.layers.Dense(128, activation='relu', input_shape=(X_train.shape[1],)),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Dense(y_train.shape[1], activation='sigmoid')
+    ])
+
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)
+
+    model.fit(X_train, y_train, epochs=epochs, batch_size=32,
+              validation_split=0.2, callbacks=[early_stopping], verbose=0)
+    return model
 
 
 def prepared_binarizer(prepared):
@@ -143,9 +158,14 @@ def prepared_binarizer(prepared):
 
 
 def load_ensemble_assets(num_models=5):
-    """Loads the scaler, binarizer, and all 5 models into RAM once."""
+    """
+    Loads the scaler, binarizer, and all 5 models into RAM once, plus the
+    feature version the models expect (1 when the directory predates versions).
+    """
+    from mlops.split import model_feature_version
+
     if not os.path.exists('ensemble_scaler.pkl') or not os.path.exists('ensemble_model_1.keras'):
-        return None, None, None
+        return None
 
     print(f"\n[System] Loading {num_models} Neural Networks into memory...")
     with open('ensemble_scaler.pkl', 'rb') as f:
@@ -157,12 +177,12 @@ def load_ensemble_assets(num_models=5):
     for i in range(num_models):
         models.append(tf.keras.models.load_model(f'ensemble_model_{i+1}.keras'))
 
-    return scaler, label_binarizer, models
+    return scaler, label_binarizer, models, model_feature_version('.')
 
 
 def predict_with_ensemble(osu_file_path, threshold, assets, classifier):
     """Predicts tags for a single map using pre-loaded ensemble assets."""
-    scaler, label_binarizer, models = assets
+    scaler, label_binarizer, models, feature_version = assets
 
     parser = OsuFileParser(osu_file_path)
     parser.read_file()
@@ -173,9 +193,16 @@ def predict_with_ensemble(osu_file_path, threshold, assets, classifier):
     if not sections:
         return ["Map is too short."]
 
-    raw_features = classifier._aggregate_features_for_map(sections)
-    if raw_features is None:
-        return ["Feature extraction failed."]
+    if feature_version == 2:
+        from osu_tagger.features.v2 import FEATURE_NAMES_V2, extract_features_v2
+        raw_features = extract_features_v2(parser.extract_raw_hit_objects(),
+                                           parser.get_difficulty(), parser.get_timing_points())
+        max_stream_length = round(np.expm1(raw_features[FEATURE_NAMES_V2.index('log_longest_chain')]))
+    else:
+        raw_features = classifier._aggregate_features_for_map(sections)
+        if raw_features is None:
+            return ["Feature extraction failed."]
+        max_stream_length = raw_features[2]
 
     X_scaled = scaler.transform(raw_features.reshape(1, -1))
 
@@ -189,14 +216,13 @@ def predict_with_ensemble(osu_file_path, threshold, assets, classifier):
     print("Prediction Probabilities:")
     for i, tag in enumerate(classes):
         prob = avg_probs[i]
-        is_predicted = prob >= threshold
+        is_predicted = predicted(prob, threshold)
         # Only print the positive hits to keep the terminal clean for multi-map
         if is_predicted:
             print(f"  [x] {tag:<20} | Probability: {prob:.3f}")
             predicted_tags.append(tag)
 
     # --- Expert System Post-Processing ---
-    max_stream_length = raw_features[2]
     alt_prob = avg_probs[list(classes).index('alternating')] if 'alternating' in classes else 0.0
 
     if max_stream_length >= 15 and alt_prob < 0.35:
@@ -204,11 +230,14 @@ def predict_with_ensemble(osu_file_path, threshold, assets, classifier):
             predicted_tags.append('streams')
             print(f"  [!] OVERRIDE: {int(max_stream_length)}-note stream detected. Forcing 'streams' tag.")
 
+    # A general tag next to a specific one that already says it (jumps beside
+    # large jumps) is hidden - see labels.SUPPRESSED_BY.
+    predicted_tags = suppress_redundant(predicted_tags)
     predicted_tags.sort()
     return predicted_tags if predicted_tags else ["No tags above threshold."]
 
 
-def test_multiple_maps_with_ensemble(max_maps=5, threshold=0.27):
+def test_multiple_maps_with_ensemble(max_maps=5, threshold=THRESHOLD):
     """Tests the ensemble on a batch of local maps instantly."""
     songs_folder = "songs"
     if not os.path.exists(songs_folder):
@@ -221,7 +250,7 @@ def test_multiple_maps_with_ensemble(max_maps=5, threshold=0.27):
         return
 
     assets = load_ensemble_assets()
-    if assets[0] is None:
+    if assets is None:
         print("Error: Ensemble not trained. Run Option 2 first.")
         return
 

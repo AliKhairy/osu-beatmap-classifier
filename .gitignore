@@ -6,6 +6,11 @@ env/
 
 # Data and model files - Do not commit these to GitHub!
 ml_dataset.json
+# Difficulty/timing sidecar for v2 features; regenerate with `cli.py enrich-dataset`.
+map_meta.json
+# Which feature version the root models were trained on; copied in by `promote`
+# alongside the .keras/.pkl files, and like them not committed.
+/feature_meta.json
 *.pkl
 corrections.json
 *.keras
@@ -57,7 +62,10 @@ model_config.json
 # and the numbers that matter are transcribed into VERIFIED.md - a committed copy
 # would just be a second version to drift out of date.
 seed_calibration.json
-gate_calibration.json
+gate_calibration*.json
 metric_stability.json
 excluded_tag_guard.json
 weak_gate_scores.json
+
+# Generated per-map probability reports (tools/map_probabilities.py) and sweeps.
+reports/

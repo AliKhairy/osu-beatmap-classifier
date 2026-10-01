@@ -1,6 +1,6 @@
 [tool.ruff]
 # Deliberately `ruff check` only. `ruff format` is NOT used anywhere in this
-# repo and must not be: neural_model.py's feature math is mirrored line-for-line
+# repo and must not be: osu_tagger/features/v1.py's feature math is mirrored line-for-line
 # in the C# app's FeatureExtractor.cs, and a reformat would churn that file for
 # no behavioural gain while making the two sides harder to diff by eye.
 line-length = 120
@@ -33,7 +33,7 @@ ignore = [
 # The feature extractor is parity-critical and intentionally verbose: long
 # expressions there mirror the C# implementation's structure. E501 is relaxed
 # rather than rewrapping math that has a line-for-line counterpart elsewhere.
-"neural_model.py" = ["E501"]
+"osu_tagger/features/v1.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,4 +1,4 @@
-# echosu_api.py
+# osu_tagger/data/echosu.py (was echosu_api.py)
 """
 This module provides a dedicated class, EchoOsuAPI, for interacting with the
 echosu.com API.

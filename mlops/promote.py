@@ -35,24 +35,39 @@ explain. See VERIFIED.md.
 """
 from dataclasses import dataclass
 
+# Every number below is measured on the CURRENT label space - the 58 labels
+# left after the label policy (mlops/labels.py) dropped 5 non-skill tags and
+# merged 3 synonym pairs - and at the CURRENT decision rule: threshold 0.26,
+# applied at display precision (labels.predicted). Changing either moves all of
+# them, so they were re-measured rather than carried over. Earlier values are
+# kept in VERIFIED.md, alongside how they were got.
+
 # Measured across 10 training seeds of the identical configuration on the frozen
-# 929-map holdout. See VERIFIED.md for the raw per-seed numbers.
-MICRO_F1_SIGMA = 0.001793
+# 929-map holdout, each trained on the 58 labels (candidates/labels58-seed-N).
+# See VERIFIED.md for the raw per-seed numbers. Was 0.001793 on 66 labels at
+# 0.27, and 0.002130 on 58 labels at 0.27.
+MICRO_F1_SIGMA = 0.002318
 
 # Tolerance = TOLERANCE_K * sigma.
 #
-# k is 4, not the 2 or 3 a "95%/99.7%" reflex would suggest, and the reason is
+# k is not the 2 or 3 a "95%/99.7%" reflex would suggest, and the reason is
 # specific: the tolerance is applied to the distance from a FIXED champion, and
-# that champion is itself one draw from the same noisy distribution. The v1
-# champion happens to sit 1.89 sigma ABOVE the seed mean. For a candidate landing
-# at a perfectly ordinary mean - 2 sigma to still pass, the tolerance must cover
+# that champion is itself one draw from a noisy distribution. For a candidate
+# landing at a perfectly ordinary mean - 2 sigma to still pass, the tolerance
+# must cover
 #
-#     (champion - mean) + 2 sigma  =  1.89 sigma + 2 sigma  ~=  3.9 sigma
+#     (champion - mean) + 2 sigma
 #
-# so k = 4. Verified empirically: k = 4 accepts all 10 honest reruns and rejects
-# the 1-epoch model. k = 3 rejects honest reruns.
-TOLERANCE_K = 4
-DEFAULT_TOLERANCE = TOLERANCE_K * MICRO_F1_SIGMA      # 0.007172
+# On 66 labels the champion sat 1.89 sigma above the seed mean, so k was 4. On
+# the 58 labels at 0.26 it sits 2.58 sigma above the retrained seeds' mean
+# (0.561577 vs 0.555591), for two measured reasons: it was a lucky draw to begin
+# with, and a model trained on a merged tag scores ~0.002 lower than the max of
+# two separately trained ones (VERIFIED.md 14). 2.58 + 2 = 4.58, so k = 5.
+#
+# Verified empirically: k = 5 accepts all 10 honest 58-label retrains and still
+# rejects the 1-epoch model (0.4141) by a wide margin.
+TOLERANCE_K = 5
+DEFAULT_TOLERANCE = TOLERANCE_K * MICRO_F1_SIGMA      # 0.011590
 
 # The ratchet floor, anchored to a FIXED reference rather than the best score
 # ever recorded.
@@ -68,14 +83,22 @@ DEFAULT_TOLERANCE = TOLERANCE_K * MICRO_F1_SIGMA      # 0.007172
 # A fixed reference cannot drift. This is the v1 champion's micro F1 - the
 # ensemble the deployed C# app shipped with - so the rule reads: never ship a
 # model meaningfully worse than what users already have.
-REFERENCE_MICRO_F1 = 0.5569668976135489
+#
+# Scored on the current 58-label space at the current threshold: the shipped
+# 66-label ensemble's probabilities projected by labels.project_probabilities
+# (dropped tags removed, merged tags taking the max of their members). It was
+# 0.5569668976135489 on the original 66 labels at 0.27 and 0.5629498176082027
+# on 58 labels at 0.27; it moves whenever the question does, because leaving it
+# would let candidates through measured against a different question.
+REFERENCE_MICRO_F1 = 0.561577293075531
 
 # Tags with support >= SUPPORT_FLOOR that the candidate never predicts at all.
-# Measured across the 10 seeds this count is 1 or 2 (sigma 0.42) against the
-# champion's 1, so +1 admits every honest rerun while still catching a model
-# that goes mute on a tag with real support.
+# Measured across the 10 58-label seeds at 0.26 this count is 0 or 1 (sigma
+# 0.32) against the champion's 1, so +1 admits every honest rerun while still
+# catching a model that goes mute on a tag with real support. (At 0.27: 0 to 2,
+# sigma 0.47; on 66 labels: 1 or 2, sigma 0.42.)
 #
-# Deliberately NOT applied to the full 66-tag count: that is far noisier
+# Deliberately NOT applied to the full tag count: that is far noisier
 # (11..16, sigma 1.34) and a strict "must not increase" rule on it rejects 5 of
 # 10 honest reruns - including seed 7, the best model in the set.
 NEVER_PREDICTED_ALLOWANCE = 1

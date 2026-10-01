@@ -11,6 +11,7 @@
 # Training data - mounted at runtime instead of baked into the image.
 downloads/
 ml_dataset.json
+map_meta.json
 
 # Local Python environment. Never copy this in: it holds Windows binaries that
 # cannot run on the image's Linux, and the image installs its own deps anyway.

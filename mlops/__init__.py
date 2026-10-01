@@ -1,23 +1,20 @@
 """
 Experiment tracking, evaluation and the promotion gate.
 
-Grouped as a package because these seven modules are one concern - deciding
-whether a model is good enough to ship - and they were cluttering the repo root
-alongside the training code.
+Grouped as a package because these modules are one concern - deciding whether
+a model is good enough to ship - separate from the code that builds and runs
+models, which is the osu_tagger package.
 
-What deliberately stays at the root, and why:
+What stays at the repo root, and why:
 
-  neural_model.py    beatmap_classifier.pkl pickles an ImprovedBeatmapClassifier
-                     INSTANCE, and pickle stores the module path. Moving this
-                     file makes that artifact unloadable with
-                     ModuleNotFoundError: No module named 'neural_model' -
-                     at runtime, not import time.
   cli.py             the Dockerfile ENTRYPOINT is ["python", "cli.py"].
-  parity_dump.py     invoked by the app repo's parity harness
-  make_goldens.py    (OsuScoutNew/parity/compare_parity.py), which this work
-                     is not allowed to touch.
+  main.py            the interactive menu.
+  neural_model.py    a shim. beatmap_classifier.pkl pickles an
+                     ImprovedBeatmapClassifier INSTANCE, and pickle stores the
+                     module path; without a module of that name the file fails
+                     to load with ModuleNotFoundError at runtime. The code
+                     itself is osu_tagger.features.v1.
 
-Modules here import the root-level training code (neural_model, osu_parser,
-ensemble_evaluator) normally; the repo root is on sys.path whenever cli.py or
-main.py runs.
+The app repo's parity harness (OsuScoutNew/parity) calls the Python side as
+`python -m osu_tagger.parity.dump` and `python -m osu_tagger.parity.goldens`.
 """

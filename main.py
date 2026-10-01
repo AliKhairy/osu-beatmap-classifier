@@ -4,12 +4,13 @@ Main orchestrator for the osu! Beatmap Classifier.
 Handles dataset building, model training, predictions, and ensemble evaluation.
 """
 import os
-from dataset_builder import build_full_dataset, save_dataset
-from neural_model import ImprovedBeatmapClassifier
-from rebuild_from_downloaded import rebuild
+from osu_tagger.data.builder import build_full_dataset, save_dataset
+from osu_tagger.features.v1 import ImprovedBeatmapClassifier
+from osu_tagger.data.rebuild import rebuild
 
 # NEW IMPORT: Pull in the ensemble script we just wrote
-from ensemble_evaluator import train_and_evaluate_ensemble
+from osu_tagger.training.ensemble import train_and_evaluate_ensemble
+from mlops.labels import THRESHOLD
 
 # The number of maps to attempt to download when building a new dataset.
 DATA_SET_SIZE = 5000
@@ -103,7 +104,7 @@ def main():
 
 def prediction_loop(classifier):
     """Handles the interactive prediction menu."""
-    from ensemble_evaluator import test_multiple_maps_with_ensemble
+    from osu_tagger.training.ensemble import test_multiple_maps_with_ensemble
 
     print("\n--- Prediction Mode ---")
 
@@ -126,7 +127,7 @@ def prediction_loop(classifier):
             predict_single_map(classifier, ensemble_available)
         elif choice == '2':
             try:
-                threshold = float(input("Enter prediction threshold (e.g., 0.27): ") or "0.27")
+                threshold = float(input(f"Enter prediction threshold (e.g., {THRESHOLD}): ") or THRESHOLD)
                 max_maps = int(input("Enter number of maps to test (e.g., 5): ") or "5")
 
                 if ensemble_available:
@@ -172,11 +173,11 @@ def predict_single_map(classifier, ensemble_available):
         map_path = os.path.join(songs_folder, chosen_file)
 
         if os.path.exists(map_path):
-            threshold = float(input("Enter prediction threshold (e.g., 0.27): ") or "0.27")
+            threshold = float(input(f"Enter prediction threshold (e.g., {THRESHOLD}): ") or THRESHOLD)
 
             # --- DEFAULT TO ENSEMBLE ---
             if ensemble_available:
-                from ensemble_evaluator import load_ensemble_assets, predict_with_ensemble
+                from osu_tagger.training.ensemble import load_ensemble_assets, predict_with_ensemble
                 assets = load_ensemble_assets()
                 predicted_tags = predict_with_ensemble(map_path, threshold, assets, classifier)
             else:

@@ -61,7 +61,8 @@ jobs:
           # Also proves the lazy-import discipline holds: promote, drift and
           # pipeline import mlflow/evidently/prefect inside their functions, so
           # --help must not pay for (or require) those imports.
-          for verb in build-dataset rebuild train train-ensemble export-onnx \
+          for verb in build-dataset rebuild enrich-dataset train train-ensemble export-onnx \
+                      tag-probabilities threshold-sweep \
                       predict evaluate promote drift pipeline; do
             echo "::group::$verb --help"
             docker run --rm osu-classifier:ci "$verb" --help
@@ -110,6 +111,14 @@ jobs:
             echo "Expected 'evaluate --holdout' to fail with no dataset, got exit 0"
             exit 1
           fi
+          if docker run --rm osu-classifier:ci tag-probabilities --model-dir /nonexistent; then
+            echo "Expected 'tag-probabilities' to fail with no models present, got exit 0"
+            exit 1
+          fi
+          if docker run --rm osu-classifier:ci threshold-sweep; then
+            echo "Expected 'threshold-sweep' to fail with no dataset, got exit 0"
+            exit 1
+          fi
           # rebuild returned 0 unconditionally until recently, even with no
           # token and no downloads/ - so `rebuild && train-ensemble` would
           # happily train on a stale dataset. The image has neither, so this
@@ -148,7 +157,7 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      # The feature tests import neural_model, which imports tensorflow at
+      # The feature tests import osu_tagger.features.v1, which imports tensorflow at
       # module level, so the full training requirements are needed here. That
       # costs a couple of minutes on a cold cache. The alternative - splitting
       # the feature math out of the TF-importing module - would mean refactoring

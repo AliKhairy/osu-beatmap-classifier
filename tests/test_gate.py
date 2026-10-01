@@ -24,8 +24,10 @@ from mlops.promote import (
     summarise_spread,
 )
 
-# The v1 champion, and a tolerance wide enough to cover ordinary training noise.
-CHAMPION = Scores(micro_f1=0.556967, never_predicted_included=1)
+# The v1 champion scored on the current 58-label space at threshold 0.26 - the
+# very model the fixed reference was measured from, so exactly that score - and a
+# tolerance wide enough to cover ordinary training noise.
+CHAMPION = Scores(micro_f1=REFERENCE_MICRO_F1, never_predicted_included=1)
 TOL = DEFAULT_TOLERANCE
 
 
@@ -42,26 +44,35 @@ class TestCalibratedConstants:
     def test_tolerance_is_k_times_sigma(self):
         assert DEFAULT_TOLERANCE == pytest.approx(TOLERANCE_K * MICRO_F1_SIGMA)
 
-    def test_k_is_four_not_two_or_three(self):
+    def test_k_covers_the_champions_lead_plus_two_sigma(self):
         """
-        k=4 is not a rounding of 'about 3 sigma'. The champion sits ~1.9 sigma
-        above the seed mean, so accepting a candidate at mean-2sigma needs
-        (champion-mean) + 2 sigma ~= 3.9 sigma. k=3 rejects honest reruns.
+        k is not a rounding of 'about 3 sigma'. On the 58-label space at 0.26
+        the champion sits ~2.58 sigma above the retrained seeds' mean, so
+        accepting a candidate at mean-2sigma needs (champion-mean) + 2 sigma
+        ~= 4.6 sigma.
         """
-        assert TOLERANCE_K == 4
+        assert TOLERANCE_K == 5
+
+    def test_every_measured_retrain_passes_and_the_weak_model_fails(self):
+        """The 10 58-label seeds and the 1-epoch model at 0.26, as measured (VERIFIED.md)."""
+        seeds = [0.555957, 0.552091, 0.555059, 0.557399, 0.557573,
+                 0.559607, 0.554348, 0.555387, 0.556137, 0.552354]
+        for micro in seeds:
+            assert decide(cand(micro), CHAMPION).promote, micro
+        assert not decide(cand(0.414121, never=0), CHAMPION).promote
 
     def test_reference_is_a_fixed_anchor_not_a_best_ever(self):
         """
         The ratchet floor must not be the maximum of past runs: that is biased
         upward and only ever rises, so the gate would tighten on its own.
         """
-        assert REFERENCE_MICRO_F1 == pytest.approx(0.5569668976135489)
+        assert REFERENCE_MICRO_F1 == pytest.approx(0.561577293075531)
 
 
 class TestMicroF1Checks:
     def test_no_champion_promotes_when_reference_is_cleared(self):
         """Something has to go first - but it still may not be junk."""
-        v = decide(cand(0.5550), champion=None)
+        v = decide(cand(0.5560), champion=None)
         assert v.promote is True
         assert 'no champion' in v.reason
 
@@ -75,7 +86,7 @@ class TestMicroF1Checks:
         assert 'reference' in v.reason
 
     def test_clearly_better_promotes(self):
-        v = decide(cand(0.5600), CHAMPION)
+        v = decide(cand(0.5660), CHAMPION)
         assert v.promote is True
 
     def test_worse_within_tolerance_promotes(self):
@@ -135,26 +146,26 @@ class TestRatchetGuard:
 
 class TestNeverPredictedGuard:
     def test_going_mute_on_extra_supported_tags_rejects(self):
-        v = decide(cand(0.5600, never=CHAMPION.never_predicted_included + 5), CHAMPION)
+        v = decide(cand(0.5660, never=CHAMPION.never_predicted_included + 5), CHAMPION)
         assert v.promote is False
         assert 'never-predicted' in v.reason
 
     def test_allowance_admits_ordinary_variation(self):
         """
-        Measured across 10 identical reruns this count was 1 or 2 against the
+        Measured across 10 identical reruns this count was 0 to 2 against the
         champion's 1, so +1 must pass.
         """
-        v = decide(cand(0.5550, never=CHAMPION.never_predicted_included
+        v = decide(cand(0.5600, never=CHAMPION.never_predicted_included
                         + NEVER_PREDICTED_ALLOWANCE), CHAMPION)
         assert v.promote is True
 
     def test_one_beyond_the_allowance_rejects(self):
-        v = decide(cand(0.5550, never=CHAMPION.never_predicted_included
+        v = decide(cand(0.5600, never=CHAMPION.never_predicted_included
                         + NEVER_PREDICTED_ALLOWANCE + 1), CHAMPION)
         assert v.promote is False
 
     def test_skipped_when_not_measurable(self):
-        v = decide(Scores(micro_f1=0.5550), Scores(micro_f1=CHAMPION.micro_f1))
+        v = decide(Scores(micro_f1=0.5600), Scores(micro_f1=CHAMPION.micro_f1))
         assert v.promote is True
         assert any('skipped' in d for _, _, d in v.checks)
 
@@ -162,7 +173,7 @@ class TestNeverPredictedGuard:
 class TestVerdictReporting:
     def test_every_check_is_recorded_even_on_a_pass(self):
         """A pass should be as auditable as a failure."""
-        v = decide(cand(0.5600), CHAMPION)
+        v = decide(cand(0.5660), CHAMPION)
         names = [n for n, _, _ in v.checks]
         assert names == ['micro_f1 vs champion', 'micro_f1 vs reference',
                          'never-predicted tags']
@@ -173,14 +184,14 @@ class TestVerdictReporting:
         assert v.report().startswith('REJECT:')
 
     def test_stringifies_for_logs(self):
-        assert str(decide(cand(0.5600), CHAMPION)).startswith('PROMOTE:')
+        assert str(decide(cand(0.5660), CHAMPION)).startswith('PROMOTE:')
         assert str(Verdict(promote=False, reason='nope')).startswith('REJECT:')
 
 
 class TestToleranceValidation:
     def test_negative_tolerance_is_rejected(self):
         with pytest.raises(ValueError, match='Tolerance must be'):
-            decide(cand(0.5550), CHAMPION, tolerance=-0.01)
+            decide(cand(0.5600), CHAMPION, tolerance=-0.01)
 
     def test_zero_tolerance_is_strict_but_legal(self):
         assert decide(cand(CHAMPION.micro_f1), CHAMPION, tolerance=0.0).promote is True

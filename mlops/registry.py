@@ -3,8 +3,8 @@ The model registry: making "the ensemble" a single registered, versioned thing.
 
 An ensemble is five .keras files plus a scaler plus a binarizer, which is a
 directory, not a model. MLflow's registry wants one model, so this wraps the
-whole ensemble - including the scaler and the 0.27 threshold - in a pyfunc.
-That way a registered version is self-contained: it takes 90 raw features and
+whole ensemble - including the scaler and the threshold - in a pyfunc.
+That way a registered version is self-contained: it takes raw features and
 returns tag probabilities, with no way to accidentally pair it with the wrong
 scaler.
 
@@ -53,7 +53,7 @@ class EnsembleTagger:
             i += 1
 
     def predict(self, context, model_input, params=None):
-        """90 unscaled features in, one probability per tag out."""
+        """Unscaled features in (90 for v1, features_v2.FEATURE_COUNT_V2 for v2), one probability per tag out."""
         import numpy as np
         import pandas as pd
 
@@ -82,6 +82,12 @@ def _artifact_map(model_dir, num_models):
     }
     for i in range(1, num_models + 1):
         artifacts['model_%d' % i] = os.path.join(model_dir, MODEL_GLOB % i)
+    # Which extractor the inputs must come from. Absent for models trained
+    # before feature versions existed, which are v1.
+    from mlops.split import FEATURE_META_NAME
+    meta = os.path.join(model_dir, FEATURE_META_NAME)
+    if os.path.exists(meta):
+        artifacts['feature_meta'] = meta
     return artifacts
 
 

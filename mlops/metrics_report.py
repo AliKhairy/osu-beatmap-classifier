@@ -11,9 +11,10 @@ CSV is logged next to it: the summary says whether to promote, the CSV says why.
 """
 import numpy as np
 
-# Kept in sync with ensemble_evaluator.THRESHOLD by importing it rather than
-# repeating the literal - a second copy of 0.27 is a second thing to forget.
-from ensemble_evaluator import THRESHOLD
+# Imported rather than repeated - a second copy of the threshold is a second
+# thing to forget. From labels.py, not the ensemble trainer, so scoring does not
+# have to import tensorflow just to learn a number.
+from mlops.labels import THRESHOLD, predicted
 
 # Minimum holdout support for a tag's per-tag F1 to be treated as a measurement
 # rather than a coin flip. One map moves a tag's recall by 1/support, so at
@@ -21,7 +22,8 @@ from ensemble_evaluator import THRESHOLD
 #
 # Chosen from that property of the holdout, NOT by picking whichever floor made
 # the gate look best - support >= 30 gives a lower spread and was not chosen.
-# On this holdout the floor keeps 49 of 66 tags. See VERIFIED.md.
+# On this holdout the floor keeps 46 of the 58 labels (49 of 66 before the
+# label policy in labels.py). See VERIFIED.md.
 SUPPORT_FLOOR = 10
 
 
@@ -29,8 +31,8 @@ def evaluate_probabilities(y_true, probs, classes, threshold=THRESHOLD):
     """
     Score averaged ensemble probabilities against binary truth.
 
-    Scores RAW thresholded output. The predict path in ensemble_evaluator and
-    neural_model additionally applies an expert-system override that forces the
+    Scores RAW thresholded output. The predict path in osu_tagger.training.ensemble
+    and osu_tagger.features.v1 additionally applies an expert-system override that forces the
     'streams' tag on maps with a 15+ note sequence; that override is deliberately
     NOT applied here, matching the existing classification_report and keeping the
     gate measuring the network rather than the network plus a hand-written rule.
@@ -50,7 +52,7 @@ def evaluate_probabilities(y_true, probs, classes, threshold=THRESHOLD):
         raise ValueError(
             "got %d class names for %d label columns" % (len(classes), y_true.shape[1]))
 
-    y_pred = (probs >= threshold).astype(int)
+    y_pred = predicted(probs, threshold).astype(int)
 
     precision, recall, f1, support = precision_recall_fscore_support(
         y_true, y_pred, average=None, zero_division=0)
