@@ -2,3 +2,7 @@
 # the image, which has no reason to carry a test runner into production.
 pytest>=8,<10
 ruff>=0.6
+# The scoring tests (tests/test_labels.py) run mlops.metrics_report, which builds
+# its per-tag report with pandas. Pinned as in requirements-mlops.txt; the rest of
+# that file (mlflow, prefect, evidently) is not needed by any test.
+pandas>=2.0
