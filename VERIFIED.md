@@ -1329,6 +1329,38 @@ above name files by their old paths; this is the map:
 
 ---
 
+## 18. v2 is the champion and ships in the app
+
+Added 2026-10-06, checked against app `main` @ `0a3453c` and this repo's
+`main` @ `e3c946b`.
+
+**The real registry's champion is v2.**
+
+```
+$ python -c "... sqlite3 mlflow.db (read-only): registered_model_aliases ..."
+('champion', 2, 'osu-tagger', 'default')
+```
+
+- The repo-root `ensemble_model_{1..5}.keras` have the same sha256 as
+  `candidates/v2-seed-2/` (holdout micro F1 0.583103, §16).
+
+**The app ships those exact models, from 1.2.1 on.**
+- The packages themselves were checked, not just the source: the
+  `OsuScoutNew-{1.2.1,1.3.0}-full.nupkg` files from the app's release-workflow
+  artifacts (`gh run download`). In both, `lib/app/Assets/ensemble_model_{1..5}.onnx`
+  have the same sha256 as the ONNX files here, and `model_config.json` is
+  identical once line endings are normalised.
+- In the app's source, `OsuScoutNew/Assets/` already held these files at tag
+  `1.2.0` (app PR #9 is an ancestor of it), but the **1.2.0 package did not
+  ship them**. A stale build committed in the app's `publish/` folder was packed
+  instead. The app repo's `release.yml` records this, and the artifact sizes
+  agree (705 MB for 1.2.0, 216 MB for 1.2.1). App PR #10 removed the folder and
+  added a byte-for-byte check of the models against `Assets/`.
+- 1.2.1 was published on 2026-10-01 by the app repo's release workflow (author
+  `github-actions[bot]`), as were 1.2.2, 1.2.3 and 1.3.0.
+
+---
+
 ## Caveats
 
 These qualify the numbers above. None of them are defects introduced by this
@@ -1371,8 +1403,9 @@ implies otherwise.
   runs and reads. Nothing acts on it — a drifted distribution does not start a
   retrain, and is not wired to any alert.
 - **No CD to the app repo.** Promotion updates the local registry and the repo
-  root. Copying the 6 files into `OsuScoutNew/Assets/` and cutting a release
-  remains a manual step, in a repository this work does not touch.
-- **v2 is not yet released in the app.** The port exists and is verified (§16)
-  on the app repo's `feat/v2-features` branch, but no v2 model has been promoted
-  in the real registry, copied into `OsuScoutNew/Assets/`, or released.
+  root. Copying the 6 files into `OsuScoutNew/Assets/` is a manual step, in a
+  repository this work does not touch. The app repo's own release workflow
+  then publishes when a PR that bumps its version is merged; nothing here
+  triggers that.
+
+v2 was listed here until it shipped; see §18.
