@@ -122,7 +122,8 @@ new model is the same as shipping any app update:
    release. Users auto-update and receive the new model on next launch.
 
 Steps 1–3 are also available as a single Prefect flow (`python cli.py pipeline`),
-in which a rejected candidate never reaches the export step.
+in which a rejected candidate never reaches the export step. It trains v2 features
+by default; `--feature-version 1` trains the old set.
 
 > **Features must stay in sync.** The app computes the input vector itself:
 > `FeatureExtractor.cs` mirrors `osu_tagger/features/v1.py` and `FeatureExtractorV2.cs`

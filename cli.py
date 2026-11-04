@@ -674,7 +674,8 @@ def build_parser():
     p.add_argument('--models', type=int, default=5)
     p.add_argument('--epochs', type=int, default=100)
     p.add_argument('--train-seed', type=int, default=None)
-    p.add_argument('--feature-version', type=int, default=1, choices=(1, 2))
+    p.add_argument('--feature-version', type=int, default=2, choices=(1, 2),
+                   help='Features to train on (default 2, what the shipped app computes)')
     p.add_argument('--tolerance', type=float, default=None)
     p.add_argument('--threshold', type=float, default=THRESHOLD)
     p.add_argument('--candidate-dir', default=None,

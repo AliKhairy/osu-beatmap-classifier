@@ -1,8 +1,18 @@
-tensorflow
-scikit-learn
-numpy
-requests
-beautifulsoup4
-python-dotenv
-tf2onnx
-onnx
+# Exact versions: the ones every model in the registry was trained and verified
+# with (VERIFIED.md). Unpinned, a fresh install or image rebuild silently picks up
+# whatever TensorFlow is newest, and saved .keras models, the ONNX export and
+# the protobuf version mlflow needs can all break with it.
+#
+# protobuf and keras are not imported directly but are pinned because they are
+# the fragile ones: mlflow needs protobuf<7 (VERIFIED.md §1), and keras reads the
+# saved models. Change these deliberately and re-run the tests and a training run.
+tensorflow==2.21.0
+keras==3.15.0
+protobuf==6.33.6
+scikit-learn==1.9.0
+numpy==2.5.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+python-dotenv==1.2.2
+tf2onnx==1.17.0
+onnx==1.22.0

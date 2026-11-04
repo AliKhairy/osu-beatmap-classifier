@@ -13,6 +13,10 @@ promote, and promote raises on rejection. A rejected candidate therefore cannot
 reach the export step - the gate is structural, not a convention someone has to
 remember.
 
+The flow trains v2 features by default, because that is what the shipped app
+computes. The export step is told which version the flow trained, so it lifts
+export-onnx's v2 safeguard for exactly that version and nothing else.
+
 build-dataset is opt-in. It needs network access and API credentials from .env,
 and it rewrites the dataset the fixed split is defined over, so it is never
 something to run by accident.
@@ -111,14 +115,17 @@ def promote_task(candidate_dir, dataset, threshold, tolerance, root_dir):
 
 
 @task(name='export-onnx')
-def export_task(root_dir):
+def export_task(root_dir, feature_version):
     import argparse
 
     import cli
 
     logger = get_run_logger()
+    # export-onnx refuses a non-v1 model unless asked, so a v2 model cannot be
+    # shipped to an app that only computes v1. Here the version was chosen when
+    # the flow was started, so allow that one.
     args = argparse.Namespace(model_dir=root_dir, out_dir=root_dir,
-                              allow_feature_version=None)
+                              allow_feature_version=feature_version)
     code = cli.cmd_export_onnx(args)
     if code != 0:
         raise RuntimeError("ONNX export failed with exit code %d" % code)
@@ -132,7 +139,7 @@ def export_task(root_dir):
 @flow(name='osu-tagger-training')
 def training_pipeline(dataset='ml_dataset.json', models=5, epochs=100, train_seed=None,
                       tolerance=None, threshold=THRESHOLD, candidate_dir=None, root_dir='.',
-                      build_dataset=False, max_maps=5000, feature_version=1):
+                      build_dataset=False, max_maps=5000, feature_version=2):
     logger = get_run_logger()
 
     if candidate_dir is None:
@@ -147,7 +154,7 @@ def training_pipeline(dataset='ml_dataset.json', models=5, epochs=100, train_see
     logger.info("Candidate macro F1: %.4f", macro_f1)
 
     promoted_root = promote_task(candidate_dir, dataset, threshold, tolerance, root_dir)
-    exported = export_task(promoted_root)
+    exported = export_task(promoted_root, feature_version)
 
     logger.info("Pipeline complete. Exported %d file(s) to %s", len(exported), promoted_root)
     return {'candidate_dir': candidate_dir, 'macro_f1': macro_f1,
